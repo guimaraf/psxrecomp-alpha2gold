@@ -1,0 +1,70 @@
+# LOCAL-ONLY SAFETY
+# These rules prevent accidental staging; they do NOT authorize deleting files
+# that already exist. In particular, never run `git clean -fdX`: `-X` deletes
+# exactly the ignored BIOS, generated sources, build trees, caches, and saves.
+
+# BIOS ROMs (copyrighted, not distributable). `psx-bios/` covers the local
+# layout used by PS1RecompProjetct; the preferred shared copy lives beside this
+# repository and is selected through PSXRECOMP_BIOS_ROM.
+/bios/
+/psx-bios/
+
+# Build artifacts. Cover named variants such as build-ucrt, build-asan,
+# build-checked, and build-t2 without deleting or relocating an existing tree.
+/recompiler/build*/
+/recompiler/cmake-build*/
+/runtime/build*/
+/test_msvc/
+
+# Recompiler output (derivative of copyrighted Sony BIOS, regenerate locally)
+/generated/
+
+# Release packaging artifacts
+release-stage/
+*.zip
+
+# Diagnostic dumps & smoke logs (transient)
+*.log
+*.jsonl
+
+# Build-generated codegen-hash header (hash_codegen.cmake): folds an emitter
+# content hash into the overlay cache path; regenerated each build, never committed.
+runtime/include/overlay_codegen_hash.h
+
+# Runtime diagnostic/crash files
+psx_crash.txt
+psx_diag.txt
+psx_dispatch_misses.txt
+psx_err.txt
+psx_out.txt
+
+# Dados de diagnóstico e scripts experimentais, sempre locais.
+/probes/
+/tools/_*.py
+/tools/_options_session/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Python caches
+__pycache__/
+
+# Game discs/EXEs and recompiler output (copyrighted, not distributable).
+# Only the per-game config (game.toml) is tracked.
+games/*/*
+!games/*/game.toml
+!games/*/seeds.txt
+
+# Runtime memory cards (local save data; never distribute)
+*.mcd
+*.mcr
+
+# macOS .app bundle (contains recompiled BIOS-derived binary — not distributable)
+/dist/
+
+# Compiled test binaries (build artifacts; the runtime/tests/*.c sources are tracked)
+runtime/tests/*.exe

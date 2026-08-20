@@ -29,3 +29,14 @@ jobs:
         run: >-
           cmake --build build/recompiler --parallel
           --target psxrecomp-game psxrecomp-toml
+
+      - name: Criar pacote ZIP
+        run: |
+          cd build/recompiler
+          zip -j psxrecomp-ubuntu-latest.zip psxrecomp-game psxrecomp-toml
+
+      - name: Publicar artefato ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: psxrecomp-ubuntu-latest
+          path: build/recompiler/psxrecomp-ubuntu-latest.zip

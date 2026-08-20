@@ -1,0 +1,31 @@
+name: Compilar recompiler
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Ubuntu / recompiler
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Obter fontes e submódulos
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configurar
+        run: >-
+          cmake -S recompiler -B build/recompiler -G Ninja
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+
+      - name: Compilar ferramentas públicas
+        run: >-
+          cmake --build build/recompiler --parallel
+          --target psxrecomp-game psxrecomp-toml

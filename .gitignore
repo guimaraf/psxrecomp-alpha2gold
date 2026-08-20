@@ -16,8 +16,12 @@
 /runtime/build*/
 /test_msvc/
 
-# Recompiler output (derivative of copyrighted Sony BIOS, regenerate locally)
-/generated/
+# Fontes C gerados necessários para compilar o runtime. Não edite estes
+# arquivos manualmente; regenere-os pelo recompiler.
+/generated/*
+!/generated/SCPH1001_full.c
+!/generated/SCPH1001_dispatch.c
+!/generated/SCPH1001.emitter.sha
 
 # Release packaging artifacts
 release-stage/

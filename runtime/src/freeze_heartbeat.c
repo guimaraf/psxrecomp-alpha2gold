@@ -914,9 +914,12 @@ static void heartbeat_write(void) {
     char tmp_path[64];
     snprintf(tmp_path, sizeof(tmp_path), HB_FILE ".tmp");
 
+    /*
     FILE *f = fopen(tmp_path, "wb");
     if (!f) return;
-    fwrite(buf, 1, (size_t)n, f);
+
+    heartbeat_format_json(buf, sizeof(buf));
+    fputs(buf, f);
     fclose(f);
 
 #ifdef _WIN32
@@ -925,6 +928,7 @@ static void heartbeat_write(void) {
 #else
     rename(tmp_path, HB_FILE);
 #endif
+    */
 }
 
 #ifdef _WIN32

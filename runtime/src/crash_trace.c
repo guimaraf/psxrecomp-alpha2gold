@@ -476,7 +476,7 @@ void psx_crash_trace_dump(const char *reason, void *seh_info) {
     {
         size_t safe_pos = pos;
         append_str(buf, sizeof(buf), &safe_pos, "  \"native_stack\": null\n}\n");
-        FILE *pf = fopen(kReportPath, "wb");
+        FILE *pf = NULL; // fopen(kReportPath, "wb");
         if (pf) { fwrite(buf, 1, safe_pos, pf); fclose(pf); }
 
         uintptr_t sp = 0;
@@ -558,7 +558,7 @@ void psx_crash_trace_dump(const char *reason, void *seh_info) {
     append_str(buf, sizeof(buf), &pos, "}\n");
 
     /* Write to file. Overwrite previous report. */
-    FILE *f = fopen(kReportPath, "wb");
+    FILE *f = NULL; // fopen(kReportPath, "wb");
     if (f) {
         fwrite(buf, 1, pos, f);
         fclose(f);

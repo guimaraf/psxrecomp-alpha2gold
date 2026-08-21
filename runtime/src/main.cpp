@@ -1,4 +1,4 @@
-﻿/* main.cpp — Phase 3 runtime entry point.
+/* main.cpp — Phase 3 runtime entry point.
  *
  * Loads BIOS ROM, initializes CPU state + SDL display, calls into
  * the recompiled reset vector. BIOS drives execution; SDL presents
@@ -3954,7 +3954,7 @@ int main(int argc, char** argv) {
      * see exactly which targets led to the null PC. (CLAUDE.md ring-buffer
      * model: consume the always-on ring after the fact, not arm-and-time.) */
     {
-        FILE* tf = std::fopen("psx_cps_exit_trace.json", "wb");
+        FILE* tf = NULL; // std::fopen("psx_cps_exit_trace.json", "wb");
         if (tf) {
             std::fprintf(tf, "{\n  \"final_pc\": \"0x%08X\",\n  \"final_ra\": \"0x%08X\",\n"
                             "  \"final_sp\": \"0x%08X\",\n  \"fntrace_seq\": %llu,\n  \"tail\": [\n",

@@ -160,12 +160,12 @@ struct LauncherModel {
     // Keyboard / a plugged-in SDL controller) and a pad type (DualShock=analog).
     int  p1_dev_index = 1;     // index into the shared device option list
     int  p2_dev_index = 0;
-    // Pad input mode (PSXRecompV4::PadMode): 0=hybrid (default), 1=analog,
-    // 2=digital. Bound to the segmented 3-way selector in each player card.
-    int  p1_mode      = 0;
-    int  p2_mode      = 0;
-    bool allow_hybrid = true;  // game.allow_hybrid: when false the Hybrid segment is hidden
-    bool mode_selectable = true; // game.lock_mode == false: when false the whole pad-mode selector is hidden
+    // Pad input mode (PSXRecompV4::PadMode): 0=hybrid, 1=analog,
+    // 2=digital (D-Pad default for Alpha 2 Gold).
+    int  p1_mode      = 2;
+    int  p2_mode      = 2;
+    bool allow_hybrid = false;
+    bool mode_selectable = false; // pad-mode selector is hidden (D-Pad only)
     bool device_locked   = false; // game.lock_device: when true the Player 1/2 cards are hidden entirely (fixed, auto-bound pad type)
     int  deadzone_pct = kDigitalDeadzonePct; // analog-stick deadzone 0-100%
     Rml::String p1_dev_label = "Keyboard";

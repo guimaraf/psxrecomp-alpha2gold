@@ -217,6 +217,14 @@ static void static_text_miss_record(uint32_t pc,
 
 void dirty_ram_write_text_misses(const char *path) {
     if (!path || !path[0]) return;
+    int has_entries = 0;
+    for (int i = 0; i < STATIC_TEXT_MISS_TABLE_SIZE; i++) {
+        if (g_static_text_miss_table[i].pc != 0) {
+            has_entries = 1;
+            break;
+        }
+    }
+    if (!has_entries) return;
     FILE *f = fopen(path, "w");
     if (!f) return;
     fprintf(f, "# psxrecomp clean game-text dispatch misses telemetry\n");

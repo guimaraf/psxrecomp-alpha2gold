@@ -1,4 +1,4 @@
-﻿/* dirty_ram_interp.h — interpret-on-dispatch for install-at-runtime RAM.
+/* dirty_ram_interp.h — interpret-on-dispatch for install-at-runtime RAM.
  *
  * See CLAUDE.md Rule 18 and docs/dynamic_handler_install.md for the full
  * rationale.  The PS1 BIOS dynamically writes 4-instruction dispatch stubs
@@ -39,6 +39,9 @@ extern "C" {
  * garbage callee-saved registers (the pig-throw blue-screen/MMIO-fatal
  * corruption, 2026-06-10). */
 int dirty_ram_dispatch(CPUState* cpu, uint32_t addr, uint32_t stop_addr);
+
+/* Export observed clean game-text misses to telemetry file */
+void dirty_ram_write_text_misses(const char *path);
 
 /* Overlay-cache windows — the address ranges eligible for capture, offline
  * recompilation, and per-entry-validated native execution (Rule 18 code that

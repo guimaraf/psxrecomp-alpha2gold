@@ -298,6 +298,12 @@ void overlay_capture_write_json(void)
     write_json_snapshot(path, bw, bitmap, g_dirty_ram_pc_table,
                         g_dirty_ram_exec_pc_table, memory_get_ram_ptr());
     free(bitmap);
+    {
+        extern void dirty_ram_write_text_misses(const char *path);
+        char miss_path[600];
+        snprintf(miss_path, sizeof(miss_path), "%s/psx_dispatch_misses.txt", s_out_dir);
+        dirty_ram_write_text_misses(miss_path);
+    }
 }
 
 int overlay_capture_count(void)

@@ -215,6 +215,21 @@ static void static_text_miss_record(uint32_t pc,
     g_static_text_miss_dropped++;
 }
 
+void dirty_ram_write_text_misses(const char *path) {
+    if (!path || !path[0]) return;
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "# psxrecomp clean game-text dispatch misses telemetry\n");
+    fprintf(f, "# addr hits modified runtime unknown\n");
+    for (int i = 0; i < STATIC_TEXT_MISS_TABLE_SIZE; i++) {
+        const StaticTextMissEntry *e = &g_static_text_miss_table[i];
+        if (e->pc == 0) continue;
+        uint32_t vaddr = (e->pc & 0x1FFFFFFFu) | 0x80000000u;
+        fprintf(f, "0x%08X %u %u %u %u\n", vaddr, e->misses, e->modified, e->runtime, e->unknown);
+    }
+    fclose(f);
+}
+
 /* Record every PC the interpreter executes (not just block entries) so
  * overlay_capture can report execution-verified seeds for the region. */
 static void exec_pc_table_record(uint32_t pc) {

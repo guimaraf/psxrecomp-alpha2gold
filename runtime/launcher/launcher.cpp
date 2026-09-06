@@ -33,6 +33,7 @@ extern "C" {
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #if defined(_WIN32)
@@ -286,32 +287,52 @@ void refresh_memcard(LauncherModel& m, int slot /*0|1*/) {
 
 // ---- input-device enumeration (None / Keyboard / plugged-in controllers) ----
 struct DeviceOption {
-    int         kind;   // 0=none, 1=keyboard, 2=controller
-    std::string guid;   // SDL joystick GUID string when kind==controller
-    std::string label;  // display name
+    int         kind;    // 0=none, 1=keyboard, 2=controller
+    std::string guid;    // SDL joystick GUID string when kind==controller
+    int         ordinal; // 0, 1, 2... for devices sharing the same GUID
+    std::string label;   // display name
 };
 
 std::vector<DeviceOption> enumerate_devices() {
     std::vector<DeviceOption> opts;
-    opts.push_back({0, "", "None"});
-    opts.push_back({1, "", "Keyboard"});
+    opts.push_back({0, "", 0, "None"});
+    opts.push_back({1, "", 0, "Keyboard"});
     const int n = SDL_NumJoysticks();
+    std::unordered_map<std::string, int> guid_counts;
+    std::unordered_map<std::string, int> name_counts;
+
+    for (int i = 0; i < n; i++) {
+        if (!SDL_IsGameController(i)) continue;
+        const char* nm = SDL_GameControllerNameForIndex(i);
+        std::string raw_name = nm ? nm : "Controller";
+        name_counts[raw_name]++;
+    }
+
+    std::unordered_map<std::string, int> name_seen;
     for (int i = 0; i < n; i++) {
         if (!SDL_IsGameController(i)) continue;
         SDL_JoystickGUID g = SDL_JoystickGetDeviceGUID(i);
         char buf[40] = {0};
         SDL_JoystickGetGUIDString(g, buf, sizeof(buf));
         const char* nm = SDL_GameControllerNameForIndex(i);
-        opts.push_back({2, std::string(buf), nm ? std::string(nm) : std::string("Controller")});
+        std::string raw_name = nm ? nm : "Controller";
+        int ord = guid_counts[buf]++;
+
+        std::string final_label = raw_name;
+        if (name_counts[raw_name] > 1) {
+            int idx = ++name_seen[raw_name];
+            final_label += " (" + std::to_string(idx) + ")";
+        }
+        opts.push_back({2, std::string(buf), ord, final_label});
     }
     return opts;
 }
 
-// The settings device string ("none"/"keyboard"/<guid>) for an option.
+// The settings device string ("none"/"keyboard"/<guid>#<ordinal>) for an option.
 std::string device_string(const DeviceOption& o) {
     if (o.kind == 0) return "none";
     if (o.kind == 1) return "keyboard";
-    return o.guid;
+    return o.guid + "#" + std::to_string(o.ordinal);
 }
 
 // Minimal RML/attribute text escape for injected option labels.
@@ -336,9 +357,27 @@ std::string rml_escape(const std::string& s) {
 int find_or_add_device_index(std::vector<DeviceOption>& opts, const std::string& dev) {
     if (dev.empty() || dev == "none") return 0;
     if (dev == "keyboard") return 1;
-    for (size_t i = 0; i < opts.size(); i++)
-        if (opts[i].kind == 2 && opts[i].guid == dev) return (int)i;
-    opts.push_back({2, dev, "Saved controller (offline)"});
+
+    std::string target_guid = dev;
+    int target_ord = 0;
+    size_t hash_pos = dev.find('#');
+    if (hash_pos != std::string::npos) {
+        target_guid = dev.substr(0, hash_pos);
+        target_ord = std::atoi(dev.substr(hash_pos + 1).c_str());
+    }
+
+    // Exact match: GUID and ordinal
+    for (size_t i = 0; i < opts.size(); i++) {
+        if (opts[i].kind == 2 && opts[i].guid == target_guid && opts[i].ordinal == target_ord)
+            return (int)i;
+    }
+    // Fallback: first available controller matching GUID (backward compatibility)
+    for (size_t i = 0; i < opts.size(); i++) {
+        if (opts[i].kind == 2 && opts[i].guid == target_guid)
+            return (int)i;
+    }
+
+    opts.push_back({2, target_guid, target_ord, "Saved controller (offline)"});
     return (int)opts.size() - 1;
 }
 

@@ -259,6 +259,7 @@ static SDL_Texture*  sdl_texture;
 struct PlayerInput {
     int   kind = 0;            /* 0=none, 1=keyboard, 2=controller */
     char  guid[40] = {0};      /* SDL joystick GUID string when kind==controller */
+    int   ordinal = 0;         /* 0, 1, 2... index among controllers sharing the same GUID */
     /* Pad input mode (PSXRecompV4::PadMode): 0=hybrid (default), 1=analog,
      * 2=digital. hybrid_analog is the per-frame auto-switch latch used only in
      * hybrid mode: true => currently presenting DualShock (stick was the last
@@ -1426,14 +1427,15 @@ static void close_controller(void) {
     close_player(g_players[1]);
 }
 
-/* Open the SDL controller whose GUID matches p.guid. If no exact GUID match
- * exists (e.g. a different physical unit of the same model, or Steam's virtual
- * pad at an unpredictable slot), fall back to the first controller not already
- * claimed by the other player. */
+/* Open the SDL controller whose GUID matches p.guid and ordinal matches p.ordinal.
+ * If no exact GUID match exists (e.g. a different physical unit of the same model,
+ * or Steam's virtual pad at an unpredictable slot), fall back to the first
+ * controller not already claimed by the other player. */
 static void open_player(PlayerInput& p, const PlayerInput& other) {
     if (p.kind != 2 || p.handle) return;
 
     int chosen = -1, fallback = -1;
+    int match_count = 0;
     const int joysticks = SDL_NumJoysticks();
     for (int i = 0; i < joysticks; i++) {
         if (!SDL_IsGameController(i)) continue;
@@ -1443,7 +1445,14 @@ static void open_player(PlayerInput& p, const PlayerInput& other) {
         /* Skip a device already opened by the other player. */
         SDL_JoystickID inst = SDL_JoystickGetDeviceInstanceID(i);
         if (other.handle && other.instance == inst) continue;
-        if (p.guid[0] && std::strcmp(buf, p.guid) == 0) { chosen = i; break; }
+
+        if (p.guid[0] && std::strcmp(buf, p.guid) == 0) {
+            if (match_count == p.ordinal) {
+                chosen = i;
+                break;
+            }
+            match_count++;
+        }
         if (fallback < 0) fallback = i;
     }
     if (chosen < 0) chosen = fallback;
@@ -1454,8 +1463,8 @@ static void open_player(PlayerInput& p, const PlayerInput& other) {
         SDL_Joystick* joy = SDL_GameControllerGetJoystick(p.handle);
         p.instance = joy ? SDL_JoystickInstanceID(joy) : -1;
         const char* name = SDL_GameControllerName(p.handle);
-        std::fprintf(stdout, "psxrecomp runtime: opened controller for slot: %s\n",
-                     name ? name : "(unnamed)");
+        std::fprintf(stdout, "psxrecomp runtime: opened controller for slot: %s (inst %d)\n",
+                     name ? name : "(unnamed)", (int)p.instance);
     }
 }
 
@@ -1488,13 +1497,14 @@ static void refresh_player_devices(void) {
 }
 
 /* Parse a [controller] device string into a player slot:
- *   "none" -> no pad; "keyboard" -> keyboard map; otherwise an SDL GUID. */
+ *   "none" -> no pad; "keyboard" -> keyboard map; otherwise an SDL GUID (#ordinal optional). */
 static void set_player_device(PlayerInput& p, const std::string& dev, int mode) {
     p.mode = mode;
     /* Hybrid starts in ANALOG (analog LED on); the auto-switch drops to digital
      * only when the player uses the d-pad. */
     p.hybrid_analog = true;
     p.guid[0] = '\0';
+    p.ordinal = 0;
     std::string d = lower_copy(trim_copy(dev));
     if (d.empty() || d == "none") { p.kind = 0; }
     else if (d == "keyboard")     { p.kind = 1; }
@@ -1506,7 +1516,13 @@ static void set_player_device(PlayerInput& p, const std::string& dev, int mode) 
     }
     else {
         p.kind = 2;
-        std::snprintf(p.guid, sizeof(p.guid), "%s", trim_copy(dev).c_str());
+        std::string s = trim_copy(dev);
+        size_t hash_pos = s.find('#');
+        if (hash_pos != std::string::npos) {
+            p.ordinal = std::atoi(s.substr(hash_pos + 1).c_str());
+            s = s.substr(0, hash_pos);
+        }
+        std::snprintf(p.guid, sizeof(p.guid), "%s", s.c_str());
     }
 }
 
@@ -1688,20 +1704,14 @@ static bool hybrid_dpad_active(const PlayerInput& p, int player, bool kb_always)
  * (stick -> analog, D-pad -> digital) so the game runs its own analog or
  * digital input path exactly as on hardware (mirrors the inline block this
  * helper was extracted from for the low-latency re-sample). */
-/* Dev input mode: while enabled, Player 1 is driven by the keyboard AND EVERY
- * connected game controller, all merged together (active-low AND) onto the P1 pad
- * word — so a tester can navigate P1 from whatever is plugged in (keyboard, the
- * launcher-assigned pad, or any other controller) with no reconfiguration. The P1
- * pad TYPE is left unchanged: a launcher-assigned analog DualShock still presents
- * as analog (so the game's analog input path / SIO handshake cadence is preserved
- * exactly), and merged sources only contribute button/stick STATE, never a type
- * downgrade. Controlled by PSX_DEV_INPUT (default ON for the dev workflow); set
- * PSX_DEV_INPUT=0 to restore strict single-device-per-port routing. */
+/* Dev input mode: while enabled via PSX_DEV_INPUT=1, Player 1 is driven by
+ * the keyboard AND EVERY connected game controller, merged onto P1.
+ * Defaults to OFF (0) so Player 1 and Player 2 maintain strict 1-to-1 routing. */
 static bool dev_any_input_enabled() {
     static int cached = -1;
     if (cached < 0) {
         const char* e = std::getenv("PSX_DEV_INPUT");
-        cached = (e && (e[0] == '0' || e[0] == 'n' || e[0] == 'N' || e[0] == 'f' || e[0] == 'F')) ? 0 : 1;
+        cached = (e && (e[0] == '1' || e[0] == 'y' || e[0] == 'Y' || e[0] == 't' || e[0] == 'T')) ? 1 : 0;
     }
     return cached != 0;
 }
@@ -1798,10 +1808,9 @@ static void sample_pad_into_sio(int override) {
     for (int s = 0; s < 2; s++) {
         PlayerInput& p = g_players[s];
         const int  player  = s + 1;             /* keybinds.ini section (1|2) */
-        /* Dev input: P1 is driven by the keyboard AND every connected controller,
-         * so a tester can navigate from whatever is plugged in (P2 keeps strict
-         * per-port routing). */
-        const bool dev_here = (dev_any_input_enabled() && s == 0);
+        /* Dev input: P1 is driven by the keyboard AND every connected controller
+         * only when dev input is explicitly requested AND P2 has no assigned device. */
+        const bool dev_here = (dev_any_input_enabled() && s == 0 && g_players[1].kind == 0);
         if (p.kind == 0 && !dev_here) continue;  /* no device in this port */
 
         /* Resolve the pad type this frame FIRST — the effective analog/digital
@@ -3436,7 +3445,7 @@ int main(int argc, char** argv) {
     for (int s = 0; s < 2; s++) {
         /* Dev-any-input keeps P1 connected even with no assigned controller so the
          * keyboard / any plugged-in controller can drive port 1 standalone. */
-        const bool dev_p1 = (dev_any_input_enabled() && s == 0);
+        const bool dev_p1 = (dev_any_input_enabled() && s == 0 && g_players[1].kind == 0);
         sio_set_pad_connected(s, (g_players[s].kind != 0 || dev_p1) ? 1 : 0);
         sio_set_pad_analog(s, pad_mode_boot_analog(g_players[s].mode), 0x80, 0x80, 0x80, 0x80);
     }

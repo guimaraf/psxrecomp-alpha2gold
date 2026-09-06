@@ -108,8 +108,7 @@ struct LauncherModel {
     int  crt             = 0;  // 0=raw,1=crt,2=composite,3=trinitron
     bool auto_skip_fmv   = false; // skip FMVs via the game's own skip
     bool turbo_loads     = true;  // fast-forward the machine through load screens (audio plays through); default on
-    // (the old "Skip PSX BIOS" toggle is gone: the HLE boot shell-skip ships
-    // on by default via [runtime] bios_hle in the player game.toml)
+    bool bios_hle        = true;  // skip BIOS boot (HLE BIOS boot shell-skip); default on
     bool spu_hq          = false;
     int  aspect_index    = 0;  // index into kAspects (0 = 4:3 native)
     int  window_width    = 1280; // window size (height = width*den/num per aspect)
@@ -507,7 +506,8 @@ void refresh_labels(LauncherModel& m) {
     m.winsize_label   = winsize_label_for(m.window_width, m.aspect_index);
     m.interpolation_fps_label = interp_fps_label(m.frame_interpolation_fps);
     m.opengl_renderer = (m.renderer == 1);
-    m.interpolation_target_visible = m.opengl_renderer && m.frame_interpolation;
+    m.frame_interpolation = false;
+    m.interpolation_target_visible = false;
     m.widescreen      = (m.aspect_index == 1);   // 16:9 == experimental native-wide
     m.ultrawide       = (m.aspect_index == 2);   // 21:9 is offered separately
     /* ws_eligible is set once at model init from GameInfo.ws_offered ([widescreen]
@@ -776,10 +776,10 @@ Result run(SDL_Window* window, void* gl_context,
     m.crt            = io.screen_kind;
     m.auto_skip_fmv  = io.auto_skip_fmv;
     m.turbo_loads    = io.turbo_loads;
+    m.bios_hle       = io.has_bios_hle ? io.bios_hle : true;
     m.fullscreen     = io.fullscreen;
-    m.frame_interpolation = io.has_frame_interpolation && io.frame_interpolation;
-    m.frame_interpolation_fps = kInterpFps[interp_fps_index(
-        io.has_frame_interpolation_fps ? io.frame_interpolation_fps : 0)];
+    m.frame_interpolation = false;
+    m.frame_interpolation_fps = 0;
     m.skip_launcher  = io.skip_launcher;
     m.spu_hq         = io.spu_hq;
     m.aspect_index   = io.has_aspect_ratio ? aspect_index_for(io.aspect_num, io.aspect_den) : 0;
@@ -860,6 +860,7 @@ Result run(SDL_Window* window, void* gl_context,
     c.Bind("antialiasing",   &m.antialiasing);
     c.Bind("auto_skip_fmv",  &m.auto_skip_fmv);
     c.Bind("turbo_loads",    &m.turbo_loads);
+    c.Bind("bios_hle",       &m.bios_hle);
     c.Bind("fullscreen",     &m.fullscreen);
     c.Bind("frame_interpolation", &m.frame_interpolation);
     c.Bind("interpolation_fps_label", &m.interpolation_fps_label);
@@ -1083,6 +1084,11 @@ Result run(SDL_Window* window, void* gl_context,
         [&m, handle](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
             m.turbo_loads = !m.turbo_loads;
             handle.DirtyVariable("turbo_loads");
+        });
+    c.BindEventCallback("toggle_bios_hle",
+        [&m, handle](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+            m.bios_hle = !m.bios_hle;
+            handle.DirtyVariable("bios_hle");
         });
     c.BindEventCallback("toggle_fullscreen",
         [&m, handle](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
@@ -1377,10 +1383,11 @@ Result run(SDL_Window* window, void* gl_context,
         io.screen_kind = m.crt;               io.has_screen_kind = true;
         io.auto_skip_fmv = m.auto_skip_fmv;   io.has_auto_skip_fmv = true;
         io.turbo_loads = m.turbo_loads;       io.has_turbo_loads = true;
+        io.bios_hle = m.bios_hle;             io.has_bios_hle = true;
         io.fullscreen = m.fullscreen;         io.has_fullscreen = true;
-        io.frame_interpolation = m.frame_interpolation;
+        io.frame_interpolation = false;
         io.has_frame_interpolation = true;
-        io.frame_interpolation_fps = m.frame_interpolation_fps;
+        io.frame_interpolation_fps = 0;
         io.has_frame_interpolation_fps = true;
         io.skip_launcher = m.skip_launcher;   io.has_skip_launcher = true;
         io.spu_hq = m.spu_hq;                 io.has_spu_hq = true;

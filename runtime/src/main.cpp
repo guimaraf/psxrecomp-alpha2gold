@@ -2271,12 +2271,35 @@ static void sdl_vblank_present(void) {
      * real time (2.2-4.8 sectors/frame against a 32-256 IRQ budget), so
      * host-speed execution is the lever that compresses load wall-time.
      * Presents 1-in-30 so visual progress stays visible. */
+    static uint64_t s_turbo_deadline = 0;
     if (turbo_loads_active) {
         g_turbo_loads_frames++;
+
+        /* Cap turbo load pacing to 5x real-time speed (~300 FPS / ~3.33ms per guest frame)
+         * with sleep-only pacing, preventing 100% CPU saturation and thermal spikes. */
+        uint64_t freq = SDL_GetPerformanceFrequency();
+        uint64_t period_5x = (uint64_t)((double)freq * (g_frame_period_ms / (5.0 * 1000.0)));
+        uint64_t now = SDL_GetPerformanceCounter();
+
+        if (s_turbo_deadline == 0 || now >= s_turbo_deadline + period_5x * 12u) {
+            s_turbo_deadline = now + period_5x;
+        } else if (now < s_turbo_deadline) {
+            uint64_t remaining_ticks = s_turbo_deadline - now;
+            uint32_t sleep_ms = (uint32_t)((remaining_ticks * 1000u) / freq);
+            if (sleep_ms >= 1) {
+                SDL_Delay(sleep_ms);
+            }
+            s_turbo_deadline += period_5x;
+        } else {
+            s_turbo_deadline += period_5x;
+        }
+
         static int tl_skip = 0;
         const int TL_PRESENT_EVERY = 30;
         tl_skip = (tl_skip + 1) % TL_PRESENT_EVERY;
         if (tl_skip != 0) return;
+    } else {
+        s_turbo_deadline = 0;
     }
 
     /* FMV auto-skip: run uncapped (no wall-clock pacing) and suppress nearly all

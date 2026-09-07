@@ -2239,11 +2239,19 @@ static void sdl_vblank_present(void) {
 
     if (g_headless) return;
 
+    /* Pacer instance for sdl_vblank_present and transition tracking */
+    static FramePacer s_vblank_pacer = { 0 };
+    static bool s_pacer_was_unpaced = false;
+
     /* TCP turbo is for automated validation and trace capture. It keeps the
      * simulation advancing and the debug server polling, but removes frontend
      * presentation and wall-clock pacing. */
 #ifndef PSX_NO_DEBUG_TOOLS
-    if (debug_server_turbo_enabled()) return;
+    if (debug_server_turbo_enabled()) {
+        s_pacer_was_unpaced = true;
+        frame_pacer_reset(&s_vblank_pacer);
+        return;
+    }
 #endif
 
     /* Turbo mode: while TAB is held, skip both VRAM->ARGB conversion and
@@ -2251,15 +2259,15 @@ static void sdl_vblank_present(void) {
      * cycles every vblank, so the BIOS proceeds at whatever rate the host
      * CPU sustains without graphics-driver vsync overhead. Present once
      * every TURBO_PRESENT_EVERY frames so the user sees visual progress. */
-    {
-        const Uint8* keys = SDL_GetKeyboardState(NULL);
+    const Uint8* keys = SDL_GetKeyboardState(NULL);
+    bool tab_turbo = (keys && keys[SDL_SCANCODE_TAB]);
+    if (tab_turbo) {
         static int turbo_skip = 0;
         const int TURBO_PRESENT_EVERY = 30;
-        if (keys[SDL_SCANCODE_TAB]) {
-            turbo_skip = (turbo_skip + 1) % TURBO_PRESENT_EVERY;
-            if (turbo_skip != 0) return;  /* skip render this frame */
-        } else {
-            turbo_skip = 0;
+        turbo_skip = (turbo_skip + 1) % TURBO_PRESENT_EVERY;
+        if (turbo_skip != 0) {
+            s_pacer_was_unpaced = true;
+            return;  /* skip render this frame */
         }
     }
 
@@ -2276,7 +2284,10 @@ static void sdl_vblank_present(void) {
         static int tl_skip = 0;
         const int TL_PRESENT_EVERY = 30;
         tl_skip = (tl_skip + 1) % TL_PRESENT_EVERY;
-        if (tl_skip != 0) return;
+        if (tl_skip != 0) {
+            s_pacer_was_unpaced = true;
+            return;
+        }
     }
 
     /* FMV auto-skip: run uncapped (no wall-clock pacing) and suppress nearly all
@@ -2286,8 +2297,13 @@ static void sdl_vblank_present(void) {
         static int fs_skip = 0;
         const int FMV_PRESENT_EVERY = 30;
         fs_skip = (fs_skip + 1) % FMV_PRESENT_EVERY;
-        if (fs_skip != 0) return;
+        if (fs_skip != 0) {
+            s_pacer_was_unpaced = true;
+            return;
+        }
     }
+
+    bool is_unpaced = tab_turbo || (turbo_loads_active != 0) || (fmv_skip_active != 0);
 
     /* Wall-clock pacing: always runs once fast_boot has ended, even when the
      * display is still disabled (e.g. game crt0 setup). Skipped only by the
@@ -2295,9 +2311,19 @@ static void sdl_vblank_present(void) {
      * race-free replacement for the old open-coded loop whose double
      * counter read could underflow into a ~24.7-day SDL_Delay (Bug B
      * hard freeze). */
-    {
-        static FramePacer pacer = { 0 };
-        frame_pacer_wait(&pacer, g_frame_period_ms);
+    if (is_unpaced) {
+        /* In turbo/unpaced mode: skip wall-clock sleep even when presenting
+         * 1-in-30 progress frames so host execution runs at full CPU speed. */
+        s_pacer_was_unpaced = true;
+        frame_pacer_reset(&s_vblank_pacer);
+    } else {
+        /* Normal paced gameplay: if transitioning out of turbo/unpaced execution,
+         * reset and immediately re-anchor the pacer so no accumulated debt is repaid. */
+        if (s_pacer_was_unpaced) {
+            s_pacer_was_unpaced = false;
+            frame_pacer_reset(&s_vblank_pacer);
+        }
+        frame_pacer_wait(&s_vblank_pacer, g_frame_period_ms);
     }
     latency_ring_mark(LAT_PACED);
 

@@ -72,4 +72,10 @@ void frame_pacer_wait(FramePacer *p, double period_ms) {
     }
     p->next_deadline += period;
 }
+
+void frame_pacer_reset(FramePacer *p) {
+    if (p) {
+        p->next_deadline = 0;
+    }
+}
 #endif /* FRAME_PACING_PURE_ONLY */

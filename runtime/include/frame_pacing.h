@@ -45,6 +45,10 @@ uint32_t frame_pacing_sleep_ms(uint64_t now, uint64_t deadline,
  * period in milliseconds (e.g. 1000.0 / 59.94). */
 void frame_pacer_wait(FramePacer *p, double period_ms);
 
+/* Reset the pacer deadline to unstarted (0), clearing any accumulated catch-up debt.
+ * Use on transitions out of turbo loads, fast-forward, FMV skip, or after long pauses. */
+void frame_pacer_reset(FramePacer *p);
+
 #ifdef __cplusplus
 }
 #endif

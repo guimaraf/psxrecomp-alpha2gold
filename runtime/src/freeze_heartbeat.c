@@ -537,7 +537,7 @@ static void freeze_dump_write(long long wall, uint64_t frame, uint64_t cyc,
         fputs("[]", f);
     }
     fputs(",\n  \"main_stack_samples\":", f);
-    if (wedge_kind == 2 || wedge_kind == 3 || wedge_kind == 5) {
+    if (wedge_kind == 2 || wedge_kind == 3) {
         freeze_dump_main_stack_samples_json(f, 8);
     } else {
         fputs("[]", f);
@@ -686,10 +686,10 @@ static void heartbeat_write(void) {
          * compute would still move last_store_pc, and any interpreted/overlay
          * work would advance dirty_insns. Checked only when frames are
          * advancing healthily (kinds 1/2/3 take precedence below). */
-        int logic_pinned =
-            (s_ring[newest_idx].current_func    == s_ring[oldest_idx].current_func) &&
-            (s_ring[newest_idx].last_store_pc   == s_ring[oldest_idx].last_store_pc) &&
-            (s_ring[newest_idx].dirty_ram_insns == s_ring[oldest_idx].dirty_ram_insns);
+        /* Logical-hang (kind D) check: disabled during interactive gameplay
+         * to prevent false-positive auto-dumps and thread pauses while polling
+         * BIOS ROM (e.g. 0x1FC09144 _card_info / CD-ROM checks) or hardware. */
+        int logic_pinned = 0;
 
         if (frame_delta == 0)
             wedge_kind = 1;

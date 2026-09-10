@@ -536,13 +536,7 @@ static void freeze_dump_write(long long wall, uint64_t frame, uint64_t cyc,
     } else {
         fputs("[]", f);
     }
-    fputs(",\n  \"main_stack_samples\":", f);
-    if (wedge_kind == 2 || wedge_kind == 3) {
-        freeze_dump_main_stack_samples_json(f, 8);
-    } else {
-        fputs("[]", f);
-    }
-    fputs("\n", f);
+    fputs(",\n  \"main_stack_samples\":[]\n", f);
 #else
     fputs("  \"main_stack\":[]\n", f);
 #endif
@@ -932,10 +926,75 @@ static void heartbeat_write(void) {
 }
 
 #ifdef _WIN32
+static void telemetry_write_live_json(void) {
+    static uint64_t last_frame = 0;
+    static uint64_t last_time_ms = 0;
+
+    uint64_t cur_frame = s_frame_count;
+    uint64_t now_ms = (uint64_t)GetTickCount64();
+
+    double fps = 0.0;
+    double frametime = 0.0;
+    if (last_time_ms != 0 && now_ms > last_time_ms) {
+        uint64_t dt = now_ms - last_time_ms;
+        uint64_t df = cur_frame >= last_frame ? (cur_frame - last_frame) : 0;
+        fps = (double)df * 1000.0 / (double)dt;
+        if (fps > 0.0) frametime = 1000.0 / fps;
+    }
+    last_frame = cur_frame;
+    last_time_ms = now_ms;
+
+    char buf[1024];
+    int n = snprintf(buf, sizeof(buf),
+        "{\n"
+        "  \"fps\": %.2f,\n"
+        "  \"frametime_ms\": %.2f,\n"
+        "  \"frame_count\": %llu,\n"
+        "  \"psx_cycle_count\": %llu,\n"
+        "  \"dirty_ram_insns\": %llu,\n"
+        "  \"dirty_ram_blocks\": %llu,\n"
+        "  \"current_func\": \"0x%08X\",\n"
+        "  \"last_store_pc\": \"0x%08X\"\n"
+        "}\n",
+        fps, frametime,
+        (unsigned long long)cur_frame,
+        (unsigned long long)psx_get_cycle_count(),
+        (unsigned long long)g_dirty_ram_insns_run,
+        (unsigned long long)g_dirty_ram_blocks_run,
+        g_debug_current_func_addr,
+        g_debug_last_store_pc
+    );
+
+    if (n > 0) {
+        FILE *f = fopen("psx_live_telemetry.json.tmp", "w");
+        if (f) {
+            fputs(buf, f);
+            fclose(f);
+            MoveFileExA("psx_live_telemetry.json.tmp", "psx_live_telemetry.json",
+                        MOVEFILE_REPLACE_EXISTING);
+        }
+    }
+}
+
 static DWORD WINAPI heartbeat_thread(LPVOID arg) {
     (void)arg;
+    uint32_t ticks = 0;
     for (;;) {
         heartbeat_write();
+        ticks++;
+
+        /* Background Telemetry Worker (runs completely parallel to main emu thread) */
+        /* Every 30 ticks (~3.0 seconds): update live performance telemetry */
+        if ((ticks % 30) == 0) {
+            telemetry_write_live_json();
+        }
+
+        /* Every 50 ticks (~5.0 seconds): flush dispatch misses to psx_dispatch_misses.txt */
+        if ((ticks % 50) == 0) {
+            extern void dirty_ram_write_text_misses(const char *path);
+            dirty_ram_write_text_misses("psx_dispatch_misses.txt");
+        }
+
         Sleep(HB_INTERVAL_MS);
     }
 }
@@ -967,6 +1026,9 @@ void freeze_heartbeat_start(const char *backend_label) {
         s_main_thread = NULL;
     }
     s_thread = CreateThread(NULL, 0, heartbeat_thread, NULL, 0, NULL);
-    if (s_thread) s_started = 1;
+    if (s_thread) {
+        SetThreadPriority(s_thread, THREAD_PRIORITY_BELOW_NORMAL);
+        s_started = 1;
+    }
 #endif
 }

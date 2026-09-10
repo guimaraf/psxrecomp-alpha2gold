@@ -34,8 +34,14 @@
 #include "lockstep.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 uint64_t g_dirty_ram_blocks_run = 0;
 uint64_t g_dirty_ram_insns_run  = 0;
@@ -225,7 +231,9 @@ void dirty_ram_write_text_misses(const char *path) {
         }
     }
     if (!has_entries) return;
-    FILE *f = fopen(path, "w");
+    char tmp_path[640];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    FILE *f = fopen(tmp_path, "w");
     if (!f) return;
     fprintf(f, "# psxrecomp clean game-text dispatch misses telemetry\n");
     fprintf(f, "# addr hits modified runtime unknown\n");
@@ -236,6 +244,11 @@ void dirty_ram_write_text_misses(const char *path) {
         fprintf(f, "0x%08X %u %u %u %u\n", vaddr, e->misses, e->modified, e->runtime, e->unknown);
     }
     fclose(f);
+#ifdef _WIN32
+    MoveFileExA(tmp_path, path, MOVEFILE_REPLACE_EXISTING);
+#else
+    rename(tmp_path, path);
+#endif
 }
 
 /* Record every PC the interpreter executes (not just block entries) so

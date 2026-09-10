@@ -170,7 +170,7 @@ int autocompile_request(void) {
      * gap to span several audio buffers. The emulation/audio threads retain
      * their own scheduling policy, and acceptance still uses a settled cache. */
     BOOL ok = CreateProcessA(NULL, full, NULL, NULL, TRUE,
-                             CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS,
+                             CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
                              NULL, s_cwd[0] ? s_cwd : NULL, &si, &pi);
     CloseHandle(wr);
     if (!ok) {

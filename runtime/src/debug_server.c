@@ -13081,7 +13081,11 @@ static int io_thread_main(void *arg)
     (void)arg;
     while (s_io_running) {
         struct sockaddr_in caddr;
+#ifdef _WIN32
         int clen = sizeof(caddr);
+#else
+        socklen_t clen = sizeof(caddr);
+#endif
         sock_t c = accept(s_listen, (struct sockaddr *)&caddr, &clen);
         if (c == SOCK_INVALID) { if (!s_io_running) break; SDL_Delay(5); continue; }
 

@@ -241,7 +241,11 @@ void dirty_ram_write_text_misses(const char *path) {
         const StaticTextMissEntry *e = &g_static_text_miss_table[i];
         if (e->pc == 0) continue;
         uint32_t vaddr = (e->pc & 0x1FFFFFFFu) | 0x80000000u;
-        fprintf(f, "0x%08X %u %u %u %u\n", vaddr, e->misses, e->modified, e->runtime, e->unknown);
+        fprintf(f, "0x%08X %llu %llu %llu %llu\n", vaddr,
+                (unsigned long long)e->misses,
+                (unsigned long long)e->modified,
+                (unsigned long long)e->runtime,
+                (unsigned long long)e->unknown);
     }
     fclose(f);
 #ifdef _WIN32

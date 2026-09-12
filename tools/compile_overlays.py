@@ -1790,8 +1790,13 @@ def compile_interior_fragment(interior: int, data: bytes, load_addr: int,
                 ranges_src = os.path.join(out_dir_tmp, fn)
         if not full_c or not ranges_src:
             return None
-        with open(full_c) as f:
-            src = patch_generated_c(f.read(), load_addr, size)
+        with open(full_c, 'rb') as f:
+            raw_c = f.read()
+        # Fast early-reject before running expensive regex passes:
+        # audit_generated_c rejects any fragment containing unsupported TODOs.
+        if b'TODO:' in raw_c:
+            return None
+        src = patch_generated_c(raw_c.decode('utf-8', errors='replace'), load_addr, size)
         c_audit = audit_generated_c(src, load_addr, size,
                                     binascii.crc32(data) & 0xFFFFFFFF, {})
         if c_audit['unknown_bad'] or c_audit['unsupported_todo_addrs']:
@@ -2501,17 +2506,41 @@ def main():
                              and (a & 0x1FFFFFFF) not in covered_entries)
             if not orphans:
                 continue
+            print(f'  compiling {len(orphans)} interior fragment(s) @0x{phys_addr:08X}...', flush=True)
             built = 0
-            for a in orphans:
-                frag_ids = compile_interior_fragment(a, data, load_addr, size,
+            if args.jobs <= 1:
+                for a in orphans:
+                    if (a & 0x1FFFFFFF) in covered_entries:
+                        continue
+                    frag_ids = compile_interior_fragment(a, data, load_addr, size,
+                                                         phys_addr, cache_dir, args,
+                                                         frag_env)
+                    if frag_ids:
+                        built += 1
+                        for ev, _cc, _ranges in frag_ids:
+                            covered_entries.add(ev & 0x1FFFFFFF)
+            else:
+                cov_lock = threading.Lock()
+                def _frag_worker(a):
+                    with cov_lock:
+                        if (a & 0x1FFFFFFF) in covered_entries:
+                            return None
+                    fids = compile_interior_fragment(a, data, load_addr, size,
                                                      phys_addr, cache_dir, args,
                                                      frag_env)
-                if frag_ids:
-                    built += 1
-                    for ev, _cc, _ranges in frag_ids:
-                        covered_entries.add(ev & 0x1FFFFFFF)
+                    if fids:
+                        with cov_lock:
+                            for ev, _cc, _ranges in fids:
+                                covered_entries.add(ev & 0x1FFFFFFF)
+                    return fids
+
+                with ThreadPoolExecutor(max_workers=args.jobs) as ex:
+                    futs = [ex.submit(_frag_worker, a) for a in orphans]
+                    for fut in as_completed(futs):
+                        if fut.result():
+                            built += 1
             print(f'  interior fragments @0x{phys_addr:08X}: {built}/{len(orphans)} '
-                  f'executed orphan interior(s) -> isolated island shards')
+                  f'executed orphan interior(s) -> isolated island shards', flush=True)
 
     # ---- Drive the capture list -------------------------------------------
     # Captures run CONCURRENTLY on a thread pool: the wall clock is dominated

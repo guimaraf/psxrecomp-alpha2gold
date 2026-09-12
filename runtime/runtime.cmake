@@ -203,6 +203,7 @@ set(PSXRECOMP_RUNTIME_SOURCES
     ${PSXRECOMP_ROOT}/runtime/src/event_ring.c
     ${PSXRECOMP_ROOT}/runtime/src/game_options.c
     ${PSXRECOMP_ROOT}/runtime/src/psx_keybinds.c
+    ${PSXRECOMP_ROOT}/runtime/src/game_core.c
     ${PSXRECOMP_ROOT}/recompiler/src/config_loader.cpp
     ${PSXRECOMP_ROOT}/recompiler/src/ps1_exe_parser.cpp
     # Tier-2 in-process JIT backend (sljit, BSD-2-Clause). Single TU; sljit
@@ -449,6 +450,9 @@ function(psxrecomp_add_runtime_target target)
         )
     endif()
     if(has_game_dispatch)
+        target_compile_definitions(${target} PRIVATE PSX_HAS_GAME_DISPATCH=1 PSX_HAS_STATIC_DISPATCH=1)
+    else()
+        # Decoupled runtime: dispatch routed dynamically via game_core.dll
         target_compile_definitions(${target} PRIVATE PSX_HAS_GAME_DISPATCH=1)
     endif()
     if(has_overlay_dispatch)
@@ -504,6 +508,7 @@ function(psxrecomp_add_runtime_target target)
     endif()
 
     if(WIN32 OR MINGW)
+        target_link_options(${target} PRIVATE "-Wl,--export-all-symbols")
         # opengl32: GL backend (gpu_gl_renderer.c). GL 1.x is exported directly
         # by opengl32; Phase 2b will load modern GL via SDL_GL_GetProcAddress.
         target_link_libraries(${target} PRIVATE ws2_32 dbghelp comdlg32 opengl32)

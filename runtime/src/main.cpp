@@ -55,6 +55,7 @@
 #if defined(PSX_LAUNCHER)
 #include "launcher.h"
 #endif
+#include "game_core.h"
 #include <SDL.h>
 #include <algorithm>
 #include <cctype>
@@ -3399,6 +3400,16 @@ int main(int argc, char** argv) {
     std::string bios_path_str    = resolved_bios.string();
     std::string memcard_dir_str  = memcard_dir.string();
     std::string disc_path_str    = resolved_disc.string();
+
+    /* Dynamic game core: ensure game_core.dll is loaded */
+    if (!game_core_is_loaded()) {
+        std::filesystem::path core_p = resolve_existing_runtime_path("game_core.dll", argv[0]);
+        if (!core_p.empty()) {
+            game_core_load(core_p.string().c_str());
+        } else {
+            game_core_load("game_core.dll");
+        }
+    }
 
     std::fprintf(stdout, "psxrecomp runtime: loading BIOS from %s\n", bios_path_str.c_str());
     memory_init(bios_path_str.c_str());

@@ -25,6 +25,7 @@ extern "C" {
 
 #include "third_party/stb_image.h"
 #include "disc_extractor.h"
+#include "game_core.h"
 
 #include <SDL.h>
 
@@ -828,12 +829,15 @@ Result run(SDL_Window* window, void* gl_context,
     refresh_disc_status(m, game_name_s, expected_serial, expected_crc, has_expected_crc);
 
     // Check if First-Run standalone recompilation setup is needed:
-    // Missing local MIPS binary (local/SLUS_005.84) or missing combat overlay cache triggers First-Run.
+    // Missing local MIPS binary (local/SLUS_005.84), combat overlay cache, or game_core.dll triggers First-Run.
     fs::path check_exe = fs::path("local/SLUS_005.84");
     fs::path check_cache = fs::path("alpha2-gold-game/cache/SLUS-00584");
     if (!fs::exists(check_cache)) check_cache = fs::path("cache/SLUS-00584");
+    fs::path check_core = fs::path("game_core.dll");
+    if (!fs::exists(check_core)) check_core = fs::path("alpha2-gold-game/game_core.dll");
+    if (!fs::exists(check_core)) check_core = fs::path("alpha2goldBuild/game_core.dll");
 
-    if (!fs::exists(check_exe) || !fs::exists(check_cache)) {
+    if (!fs::exists(check_exe) || !fs::exists(check_cache) || !fs::exists(check_core)) {
         m.setup_needed = true;
         m.view = "first_run";
     }
@@ -1427,7 +1431,27 @@ Result run(SDL_Window* window, void* gl_context,
                         }
                     }
 
-                    // 4. Finished
+                    // 4. Compile Recompiled Game Core into game_core.dll using TCC
+                    update_progress(80, "Compiling game_core.dll with TinyCC (~8 seconds)...");
+                    fs::path core_bat = "tools/compile_game_core.bat";
+                    if (fs::exists(core_bat)) {
+                        int rc = std::system(core_bat.string().c_str());
+                        if (rc != 0) {
+                            update_progress(0, "Game core compilation failed (exit " + std::to_string(rc) + ").");
+                            setup_state->failed = true;
+                            setup_state->running = false;
+                            return;
+                        }
+                    }
+
+                    // Dynamically load game_core.dll
+                    if (!game_core_load("game_core.dll")) {
+                        if (!game_core_load("alpha2goldBuild/game_core.dll")) {
+                            game_core_load("alpha2-gold-game/game_core.dll");
+                        }
+                    }
+
+                    // 5. Finished
                     update_progress(100, "Setup complete! Launching Street Fighter Alpha 2 Gold...");
                     setup_state->complete = true;
                     setup_state->running = false;

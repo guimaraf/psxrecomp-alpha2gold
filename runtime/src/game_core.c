@@ -36,6 +36,8 @@ int game_core_load(const char* dll_path) {
 #if defined(_WIN32)
     HMODULE h = LoadLibraryA(path);
     if (!h) {
+        DWORD err = GetLastError();
+        fprintf(stderr, "psxrecomp: LoadLibraryA('%s') failed with error %lu\n", path, (unsigned long)err);
         return 0;
     }
     psx_dispatch_game_compiled_fn fn_dispatch =

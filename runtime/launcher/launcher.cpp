@@ -1338,7 +1338,12 @@ Result run(SDL_Window* window, void* gl_context,
 
     c.BindEventCallback("start_setup",
         [&m, handle, setup_state](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
-            if (setup_state->running.load() || m.setup_complete) return;
+            if (m.setup_complete) {
+                m.view = "dashboard";
+                handle.DirtyVariable("view");
+                return;
+            }
+            if (setup_state->running.load()) return;
             if (m.disc_path.empty() || !fs::exists(std::string(m.disc_path))) {
                 m.setup_status = "Error: Please select a valid game disc (.cue / .bin / .iso) first.";
                 handle.DirtyVariable("setup_status");
@@ -1576,20 +1581,19 @@ Result run(SDL_Window* window, void* gl_context,
         } else if (setup_state->complete.load() && !m.setup_complete) {
             m.setup_running = false;
             m.setup_complete = true;
+            m.setup_needed = false;
             m.setup_pct = 100;
             m.setup_pct_str = "100%";
-            m.setup_status = "Setup complete! Launching...";
-            m.setup_button_text = "LAUNCHING...";
+            m.setup_status = "Compilation complete! Game core and combat overlays are ready.";
+            m.setup_button_text = "CONTINUE TO DASHBOARD";
             handle.DirtyVariable("setup_running");
             handle.DirtyVariable("setup_complete");
+            handle.DirtyVariable("setup_needed");
             handle.DirtyVariable("setup_pct");
             handle.DirtyVariable("setup_pct_str");
             handle.DirtyVariable("setup_status");
             handle.DirtyVariable("setup_button_text");
-
-            m.view = "dashboard";
-            handle.DirtyVariable("view");
-            m.launch_requested = true;
+            // Do not launch automatically: stay in launcher for user review
         } else if (setup_state->failed.load() && m.setup_running) {
             m.setup_running = false;
             m.setup_button_text = "RETRY COMPILATION";

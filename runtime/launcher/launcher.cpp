@@ -1481,6 +1481,20 @@ Result run(SDL_Window* window, void* gl_context,
             handle.DirtyVariable("setup_pct_str");
             handle.DirtyVariable("setup_status");
 
+#if defined(_WIN32)
+            AllocConsole();
+            FILE* f_dummy;
+            freopen_s(&f_dummy, "CONOUT$", "w", stdout);
+            freopen_s(&f_dummy, "CONOUT$", "w", stderr);
+            freopen_s(&f_dummy, "CONIN$", "r", stdin);
+            SetConsoleTitleA("Street Fighter Alpha 2 Gold - Compilation");
+            HWND hConsole = GetConsoleWindow();
+            if (hConsole) {
+                ShowWindow(hConsole, SW_SHOW);
+                SetForegroundWindow(hConsole);
+            }
+#endif
+
             setup_state->running = true;
             setup_state->complete = false;
             setup_state->failed = false;
@@ -1734,7 +1748,14 @@ Result run(SDL_Window* window, void* gl_context,
                 m.setup_status = cur_stat;
                 handle.DirtyVariable("setup_status");
             }
-        } else if (setup_state->complete.load() && !m.setup_complete) {
+        } else        if (setup_state->complete.load() && m.setup_running) {
+#if defined(_WIN32)
+            HWND hConsole = GetConsoleWindow();
+            if (hConsole) {
+                ShowWindow(hConsole, SW_HIDE);
+                FreeConsole();
+            }
+#endif
             m.setup_running = false;
             m.setup_complete = true;
             m.setup_needed = false;
@@ -1820,6 +1841,16 @@ Result run(SDL_Window* window, void* gl_context,
     if (setup_state->worker.joinable()) {
         setup_state->worker.join();
     }
+
+#if defined(_WIN32)
+    {
+        HWND hConsole = GetConsoleWindow();
+        if (hConsole) {
+            ShowWindow(hConsole, SW_HIDE);
+            FreeConsole();
+        }
+    }
+#endif
 
     Rml::Shutdown();
     RmlGL3::Shutdown();

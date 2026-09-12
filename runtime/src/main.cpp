@@ -2082,9 +2082,17 @@ static void sdl_vblank_present(void) {
                          fps_base_title.c_str(), fps, speed);
                 SDL_SetWindowTitle(sdl_window, title);
             }
+#if defined(_WIN32)
+            if (GetConsoleWindow() != NULL) {
+                std::fprintf(stderr, "[FPS] game: %.1f fps (%.2fx) | frames: %llu\n",
+                             fps, speed, (unsigned long long)s_frame_count);
+                std::fflush(stderr);
+            }
+#else
             std::fprintf(stderr, "[FPS] game: %.1f fps (%.2fx) | frames: %llu\n",
                          fps, speed, (unsigned long long)s_frame_count);
             std::fflush(stderr);
+#endif
             fps_last_time = now;
             fps_last_frame = s_frame_count;
         }
@@ -3332,6 +3340,15 @@ int main(int argc, char** argv) {
                 return 0;
             }
             if (lr == psx_launcher::Result::Launch) {
+#if defined(_WIN32)
+                {
+                    HWND hConsole = GetConsoleWindow();
+                    if (hConsole) {
+                        ShowWindow(hConsole, SW_HIDE);
+                        FreeConsole();
+                    }
+                }
+#endif
                 g_video_renderer  = seed.renderer;
                 g_video_scale     = seed.supersampling;
                 g_video_aa        = seed.antialiasing;

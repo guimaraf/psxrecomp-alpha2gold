@@ -1826,7 +1826,8 @@ def compile_interior_fragment(interior: int, data: bytes, load_addr: int,
         if os.path.isdir(p):
             include_dirs.append(p)
         if not compile_dll(patched_c, dll_path, include_dirs,
-                           gcc=args.gcc, flavor=args.flavor):
+                           gcc=args.gcc, flavor=args.flavor,
+                           compiler=args.compiler, tcc=args.tcc):
             return None
         write_overlay_ranges_from(frag_ids, dll_path[:-4] + '.ranges')
         return frag_ids
@@ -1897,6 +1898,8 @@ def _compile_dll_tcc(c_path: str, out_dll: str, include_dirs, flavor: int,
             f.write(data[3:])
     cmd = [tcc, '-shared',
            '-DPSX_OVERLAY_DLL_BUILD',
+           '-DPSX_NO_DEBUG_TOOLS',
+           '-DPSX_ENABLE_BLOCK_CYCLES=1',
            f'-DPSX_OVERLAY_FLAVOR={int(flavor)}',
            c_path, '-o', out_dll]
     for d in include_dirs:

@@ -56,6 +56,13 @@ static inline void psx_cyc_deps(CPUState* cpu, uint32_t reg_mask) {
         unsigned long _psx_ctz_idx;
         _BitScanForward(&_psx_ctz_idx, reg_mask);
         unsigned n = (unsigned)_psx_ctz_idx;
+#elif defined(__TINYC__)
+        static const uint8_t _debruijn32[32] = {
+            0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8,
+            31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
+        };
+        uint32_t lowest = reg_mask & (0u - reg_mask);
+        unsigned n = (unsigned)_debruijn32[(lowest * 0x077CB531u) >> 27];
 #else
         unsigned n = (unsigned)__builtin_ctz(reg_mask);
 #endif

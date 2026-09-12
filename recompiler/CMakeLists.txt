@@ -87,7 +87,9 @@ target_include_directories(psxrecomp-game PRIVATE
     lib/ELFIO
 )
 target_link_libraries(psxrecomp-game PRIVATE fmt rabbitizer)
-if(MINGW OR WIN32)
+if(MINGW)
+    target_link_options(psxrecomp-game PRIVATE -static -static-libgcc -static-libstdc++ -Wl,--stack,16777216)
+elseif(WIN32)
     target_link_options(psxrecomp-game PRIVATE -Wl,--stack,16777216)
 endif()
 

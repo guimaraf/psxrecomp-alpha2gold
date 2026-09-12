@@ -276,11 +276,10 @@ static PlayerInput g_players[2];
  * (sized for the native 640x512 when supersampling is off). */
 static uint32_t*     sdl_pixel_buf = nullptr;
 
-/* [video] options, resolved from the game config (defaults: native + AA). */
-static int           g_video_scale = 1;     /* internal-resolution SSAA factor */
-static bool          g_video_aa    = true;  /* linear present filtering */
+static int           g_video_scale = 2;     /* internal-resolution SSAA factor */
+static bool          g_video_aa    = false; /* linear present filtering */
 static int           g_video_texfilter = 0; /* 0=nearest, 1=bilinear */
-static int           g_video_renderer = 0;  /* 0=software, 1=opengl (requested) */
+static int           g_video_renderer = 1;  /* 0=software, 1=opengl (requested) */
 static int           g_fullscreen     = 0;  /* launch the game window in desktop fullscreen */
 static int           g_video_screen   = 0;  /* 0=raw,1=crt,2=composite,3=trinitron */
 static int           g_video_win_w    = 1280; /* window width (height follows aspect) */
@@ -311,7 +310,7 @@ static int           g_fmv_skip_no_xa_hold  = 4;
  * (1=vsync/tear-free, 0=immediate/lowest display latency+tearing, -1=adaptive);
  * it trims the display-side scanout latency the CPU-side ring can't see. */
 static int           g_low_latency_input = 1;
-static int           g_video_vsync        = 1;
+static int           g_video_vsync        = 0;
 static int           g_exclusive_fullscreen = 0;
 static int           g_gpu_fence_sync     = 1;
 static int           g_frame_interpolation = 0;

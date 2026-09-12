@@ -166,30 +166,12 @@ struct RuntimeConfig {
     // (default, behaves exactly as before). 2..4 render geometry/shading into
     // an N*-scaled mirror of VRAM and downsample on present — true ordered-grid
     // supersampling + edge anti-aliasing. Cost scales ~N^2 in fill rate.
-    int                   video_supersampling = 1;
-
-    // antialiasing: when true the present path uses linear filtering when
-    // scaling the framebuffer to the window (smooths the supersample
-    // downscale and any window resize). false = nearest (sharp pixels).
-    // Defaults to true.
-    bool                  video_antialiasing = true;
-
-    // texture_filtering: "nearest" (default, native PSX look) | "bilinear"
-    // (smooths textures and 2D backgrounds). Stored as 0/1.
+    int                   video_supersampling = 2;
+    bool                  video_antialiasing = false;
     int                   video_texture_filter = 0;
-
-    // renderer: "software" (default) | "opengl". Selects the rasterizer/present
-    // backend. The OpenGL backend is a hardware-accelerated alternative; the
-    // software rasterizer remains the fallback. Stored as 0=software, 1=opengl.
-    int                   video_renderer = 0;
-
-    // low_latency_input: re-sample the pad after the wall-clock pacer (just
-    // before present) so the next CPU frame reads near-fresh input instead of
-    // input ~one frame stale. Default on. vsync: present/swap mode —
-    // 1=on (tear-free, default), 0=immediate (lowest display latency, may
-    // tear), -1=adaptive. The wall-clock pacer holds 59.94Hz regardless.
+    int                   video_renderer = 1;
     bool                  video_low_latency_input = true;
-    int                   video_vsync             = 1;
+    int                   video_vsync             = 0;
     bool                  video_gpu_fence_sync    = true;
     bool                  video_exclusive_fullscreen = false;
     bool                  video_frame_interpolation = false;

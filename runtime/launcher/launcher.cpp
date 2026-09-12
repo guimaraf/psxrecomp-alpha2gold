@@ -212,6 +212,7 @@ struct LauncherModel {
     bool        setup_needed      = false;
     bool        setup_running     = false;
     bool        setup_complete    = false;
+    bool        has_compilers     = false;
     int         setup_pct         = 0;
     Rml::String setup_pct_str     = "0%";
     Rml::String setup_status      = "Ready to compile.";
@@ -941,9 +942,10 @@ Result run(SDL_Window* window, void* gl_context,
     if (!fs::exists(check_core)) check_core = assets / "game_core.dll";
     if (!fs::exists(check_core)) check_core = fs::path("alpha2goldBuild/game_core.dll");
     if (!fs::exists(check_core)) check_core = fs::path("../game_core.dll");
-    if (!fs::exists(check_core)) check_core = fs::path("alpha2-gold-game/game_core.dll");
+    m.has_compilers = fs::exists("compileBuild") || fs::exists(assets / "compileBuild") ||
+                      fs::exists("overlay_toolchain") || fs::exists(assets / "overlay_toolchain");
 
-    if (!fs::exists(check_exe) || !fs::exists(check_cache) || !fs::exists(check_core)) {
+    if (!fs::exists(check_core) || !fs::exists(check_cache)) {
         m.setup_needed = true;
         m.view = "first_run";
     }
@@ -1052,6 +1054,7 @@ Result run(SDL_Window* window, void* gl_context,
     c.Bind("setup_pct_str",     &m.setup_pct_str);
     c.Bind("setup_status",      &m.setup_status);
     c.Bind("setup_button_text", &m.setup_button_text);
+    c.Bind("has_compilers",     &m.has_compilers);
     c.Bind("cfg_player",     &m.cfg_player);
     c.Bind("cfg_player_label", &m.cfg_player_label);
     c.Bind("p1_mode",        &m.p1_mode);
@@ -1438,6 +1441,22 @@ Result run(SDL_Window* window, void* gl_context,
         [&m](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { m.launch_requested = true; });
     c.BindEventCallback("quit",
         [&m](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { m.quit_requested = true; });
+    c.BindEventCallback("remove_compilers",
+        [&m, handle, assets](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+            std::error_code ec;
+            if (fs::exists("compileBuild")) fs::remove_all("compileBuild", ec);
+            if (fs::exists(assets / "compileBuild")) fs::remove_all(assets / "compileBuild", ec);
+            if (fs::exists("generated")) fs::remove_all("generated", ec);
+            if (fs::exists(assets / "generated")) fs::remove_all(assets / "generated", ec);
+            if (fs::exists("local")) fs::remove_all("local", ec);
+            if (fs::exists(assets / "local")) fs::remove_all(assets / "local", ec);
+            if (fs::exists("overlay_toolchain")) fs::remove_all("overlay_toolchain", ec);
+            if (fs::exists(assets / "overlay_toolchain")) fs::remove_all(assets / "overlay_toolchain", ec);
+            if (fs::exists("overlay_captures.json")) fs::remove("overlay_captures.json", ec);
+            if (fs::exists(assets / "overlay_captures.json")) fs::remove(assets / "overlay_captures.json", ec);
+            m.has_compilers = false;
+            handle.DirtyVariable("has_compilers");
+        });
 
     // ---- First-Run Setup Worker State & Callback ----
     struct SetupWorkerState {
@@ -1559,8 +1578,11 @@ Result run(SDL_Window* window, void* gl_context,
 
                     // 2. Run static recompiler
                     update_progress(30, "Recompiling MIPS to native C code with psxrecomp-game...");
-                    fs::path recompiler_exe = "psxrecomp/recompiler/build/psxrecomp-game.exe";
+                    fs::path recompiler_exe = "compileBuild/overlay_toolchain/psxrecomp-game.exe";
+                    if (!fs::exists(recompiler_exe)) recompiler_exe = assets / "compileBuild/overlay_toolchain/psxrecomp-game.exe";
                     if (!fs::exists(recompiler_exe)) recompiler_exe = "overlay_toolchain/psxrecomp-game.exe";
+                    if (!fs::exists(recompiler_exe)) recompiler_exe = assets / "overlay_toolchain/psxrecomp-game.exe";
+                    if (!fs::exists(recompiler_exe)) recompiler_exe = "psxrecomp/recompiler/build/psxrecomp-game.exe";
                     if (!fs::exists(recompiler_exe)) recompiler_exe = "../overlay_toolchain/psxrecomp-game.exe";
                     if (!fs::exists(recompiler_exe)) recompiler_exe = "psxrecomp-game.exe";
 
@@ -1578,7 +1600,10 @@ Result run(SDL_Window* window, void* gl_context,
 
                     // 3. Compile Combat Overlays using TCC
                     update_progress(60, "Compiling combat overlay DLLs with TCC (~178 shards)...");
-                    fs::path overlay_bat = "tools/compile_tcc_overlays.bat";
+                    fs::path overlay_bat = "compileBuild/tools/compile_tcc_overlays.bat";
+                    if (!fs::exists(overlay_bat)) overlay_bat = assets / "compileBuild/tools/compile_tcc_overlays.bat";
+                    if (!fs::exists(overlay_bat)) overlay_bat = "tools/compile_tcc_overlays.bat";
+                    if (!fs::exists(overlay_bat)) overlay_bat = assets / "tools/compile_tcc_overlays.bat";
                     if (!fs::exists(overlay_bat)) overlay_bat = "../tools/compile_tcc_overlays.bat";
                     if (fs::exists(overlay_bat)) {
                         overlay_bat = fs::absolute(overlay_bat).make_preferred();
@@ -1591,7 +1616,10 @@ Result run(SDL_Window* window, void* gl_context,
 
                     // 4. Compile Recompiled Game Core into game_core.dll using TCC
                     update_progress(80, "Compiling game_core.dll with TinyCC (~8 seconds)...");
-                    fs::path core_bat = "tools/compile_game_core.bat";
+                    fs::path core_bat = "compileBuild/tools/compile_game_core.bat";
+                    if (!fs::exists(core_bat)) core_bat = assets / "compileBuild/tools/compile_game_core.bat";
+                    if (!fs::exists(core_bat)) core_bat = "tools/compile_game_core.bat";
+                    if (!fs::exists(core_bat)) core_bat = assets / "tools/compile_game_core.bat";
                     if (!fs::exists(core_bat)) core_bat = "../tools/compile_game_core.bat";
                     if (fs::exists(core_bat)) {
                         core_bat = fs::absolute(core_bat).make_preferred();

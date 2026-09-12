@@ -323,6 +323,17 @@ button:hover { background-color: #232d3c; }
 }
 .compile-btn:hover { background-color: #3b82f6; }
 .compile-btn:disabled { opacity: 0.5; }
+.clean-btn {
+	background-color: #831843;
+	border: 1dp #be185d;
+	color: #ffffff;
+	font-weight: bold;
+	font-size: 15dp;
+	padding: 10dp 24dp;
+	border-radius: 8dp;
+	margin-right: 14dp;
+}
+.clean-btn:hover { background-color: #9d174d; border-color: #f43f5e; }
 </style>
 </head>
 
@@ -397,7 +408,8 @@ button:hover { background-color: #232d3c; }
 				</div>
 			</div>
 
-			<div style="display: flex; flex-direction: row; justify-content: flex-end; margin-top: 14dp;">
+			<div style="display: flex; flex-direction: row; justify-content: flex-end; align-items: center; margin-top: 14dp;">
+				<button class="clean-btn" data-if="setup_complete && has_compilers" data-event-click="remove_compilers">REMOVE COMPILERS</button>
 				<button class="compile-btn" data-if="setup_running == false" data-event-click="start_setup">{{setup_button_text}}</button>
 				<button class="compile-btn" data-if="setup_running == true" disabled="disabled">COMPILING...</button>
 			</div>
@@ -579,6 +591,10 @@ button:hover { background-color: #232d3c; }
 				<button data-event-click="browse_disc">Browse</button>
 				<span class="path" data-if="disc_path != ''">{{disc_path}}</span>
 				<span class="path empty" data-if="disc_path == ''">(not set)</span></span></div>
+			<div class="set-row" data-if="has_compilers"><span class="set-lbl">Build Tools</span><span class="set-ctl">
+				<button class="clean-btn" style="padding: 6dp 14dp; font-size: 13dp; margin-right: 0dp;" data-event-click="remove_compilers">Remove Compilers (~65 MB)</button></span></div>
+			<div class="set-row" data-if="!has_compilers"><span class="set-lbl">Build Tools</span><span class="set-ctl">
+				<span class="path">Clean (Compilers Removed)</span></span></div>
 		</div>
 	</div>
 

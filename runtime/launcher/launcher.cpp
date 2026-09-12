@@ -1454,6 +1454,8 @@ Result run(SDL_Window* window, void* gl_context,
             if (fs::exists(assets / "overlay_toolchain")) fs::remove_all(assets / "overlay_toolchain", ec);
             if (fs::exists("overlay_captures.json")) fs::remove("overlay_captures.json", ec);
             if (fs::exists(assets / "overlay_captures.json")) fs::remove(assets / "overlay_captures.json", ec);
+            if (fs::exists("seeds")) fs::remove_all("seeds", ec);
+            if (fs::exists(assets / "seeds")) fs::remove_all(assets / "seeds", ec);
             m.has_compilers = false;
             handle.DirtyVariable("has_compilers");
         });

@@ -364,6 +364,13 @@ static RuntimeConfig parse_runtime_block(const toml::value& cfg, const fs::path&
 
 fs::path find_project_root(const fs::path& config_path) {
     fs::path cur = fs::absolute(config_path).parent_path();
+    // If the directory containing the config is already a self-contained game/build root,
+    // lock root to cur and do not walk upward into any parent repositories.
+    if (fs::exists(cur / "game.toml") &&
+        (fs::exists(cur / "compileBuild") || fs::exists(cur / "Alpha2Gold_Launcher.exe") ||
+         fs::exists(cur / "local") || fs::exists(cur / "disc"))) {
+        return cur;
+    }
     const fs::path fallback = cur;
     for (int i = 0; i < 8; ++i) {
         for (const char* marker : { ".gitignore", ".git", "CMakeLists.txt" }) {
@@ -684,8 +691,15 @@ GameConfig load_game_config(const fs::path& config_path_in) {
         throw std::runtime_error(
             fmt::format("{}: [recompiler] missing 'seeds' field", config_path.string()));
     }
-    const fs::path seeds_path =
+    fs::path seeds_path =
         fs::absolute(root / toml::find<std::string>(recomp, "seeds"));
+    if (!fs::exists(seeds_path)) {
+        if (fs::exists(root / "compileBuild" / toml::find<std::string>(recomp, "seeds"))) {
+            seeds_path = fs::absolute(root / "compileBuild" / toml::find<std::string>(recomp, "seeds"));
+        } else if (fs::exists(root / ".." / toml::find<std::string>(recomp, "seeds"))) {
+            seeds_path = fs::absolute(root / ".." / toml::find<std::string>(recomp, "seeds"));
+        }
+    }
 
     fs::path bios_thunks_path;
     if (recomp.contains("bios_thunks")) {

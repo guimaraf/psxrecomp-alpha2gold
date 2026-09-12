@@ -928,11 +928,20 @@ Result run(SDL_Window* window, void* gl_context,
     // Check if First-Run standalone recompilation setup is needed:
     // Missing local MIPS binary (local/SLUS_005.84), combat overlay cache, or game_core.dll triggers First-Run.
     fs::path check_exe = fs::path("local/SLUS_005.84");
-    fs::path check_cache = fs::path("alpha2-gold-game/cache/SLUS-00584");
-    if (!fs::exists(check_cache)) check_cache = fs::path("cache/SLUS-00584");
+    if (!fs::exists(check_exe)) check_exe = assets / "local/SLUS_005.84";
+    if (!fs::exists(check_exe)) check_exe = fs::path("../local/SLUS_005.84");
+
+    fs::path check_cache = fs::path("cache/SLUS-00584");
+    if (!fs::exists(check_cache)) check_cache = assets / "cache/SLUS-00584";
+    if (!fs::exists(check_cache)) check_cache = fs::path("alpha2goldBuild/cache/SLUS-00584");
+    if (!fs::exists(check_cache)) check_cache = fs::path("alpha2-gold-game/cache/SLUS-00584");
+    if (!fs::exists(check_cache)) check_cache = fs::path("../cache/SLUS-00584");
+
     fs::path check_core = fs::path("game_core.dll");
-    if (!fs::exists(check_core)) check_core = fs::path("alpha2-gold-game/game_core.dll");
+    if (!fs::exists(check_core)) check_core = assets / "game_core.dll";
     if (!fs::exists(check_core)) check_core = fs::path("alpha2goldBuild/game_core.dll");
+    if (!fs::exists(check_core)) check_core = fs::path("../game_core.dll");
+    if (!fs::exists(check_core)) check_core = fs::path("alpha2-gold-game/game_core.dll");
 
     if (!fs::exists(check_exe) || !fs::exists(check_cache) || !fs::exists(check_core)) {
         m.setup_needed = true;
@@ -1443,7 +1452,7 @@ Result run(SDL_Window* window, void* gl_context,
     auto setup_state = std::make_shared<SetupWorkerState>();
 
     c.BindEventCallback("start_setup",
-        [&m, handle, setup_state](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+        [&m, handle, setup_state, assets](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
             if (m.setup_complete) {
                 m.view = "dashboard";
                 handle.DirtyVariable("view");
@@ -1488,7 +1497,7 @@ Result run(SDL_Window* window, void* gl_context,
                 setup_state->worker.join();
             }
 
-            setup_state->worker = std::thread([setup_state, disc_path_str, bios_path_str]() {
+            setup_state->worker = std::thread([setup_state, disc_path_str, bios_path_str, assets]() {
                 auto update_progress = [&](int p, const std::string& msg) {
                     setup_state->pct = p;
                     std::lock_guard<std::mutex> lock(setup_state->mtx);
@@ -1583,10 +1592,24 @@ Result run(SDL_Window* window, void* gl_context,
                     }
 
                     // Dynamically load game_core.dll
-                    if (!game_core_load("game_core.dll")) {
-                        if (!game_core_load("alpha2goldBuild/game_core.dll")) {
-                            game_core_load("alpha2-gold-game/game_core.dll");
+                    std::vector<fs::path> core_cands = {
+                        fs::path("game_core.dll"),
+                        assets / "game_core.dll",
+                        fs::path("alpha2goldBuild/game_core.dll"),
+                        fs::path("../game_core.dll"),
+                        fs::path("alpha2-gold-game/game_core.dll")
+                    };
+                    bool loaded_core = false;
+                    for (const auto& cp : core_cands) {
+                        if (fs::exists(cp)) {
+                            if (game_core_load(cp.string().c_str())) {
+                                loaded_core = true;
+                                break;
+                            }
                         }
+                    }
+                    if (!loaded_core) {
+                        game_core_load("game_core.dll");
                     }
 
                     // 5. Finished

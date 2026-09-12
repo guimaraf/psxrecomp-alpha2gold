@@ -227,36 +227,36 @@ button:hover { background-color: #232d3c; }
 	background-color: #11161f;
 	border: 1dp #1e2733;
 	border-radius: 12dp;
-	padding: 22dp 26dp;
-	margin-bottom: 14dp;
+	padding: 16dp 22dp;
+	margin-bottom: 10dp;
 }
 .firstrun-title {
 	display: block;
-	font-size: 24dp;
+	font-size: 20dp;
 	font-weight: bold;
 	color: #ffffff;
-	margin-bottom: 8dp;
+	margin-bottom: 6dp;
 }
 .firstrun-desc {
 	display: block;
 	color: #9aa4b2;
-	font-size: 14dp;
-	line-height: 20dp;
-	margin-bottom: 18dp;
+	font-size: 13dp;
+	line-height: 18dp;
+	margin-bottom: 12dp;
 }
 .setup-box {
 	display: block;
 	background-color: #161d28;
 	border: 1dp #2b3543;
 	border-radius: 9dp;
-	padding: 16dp 20dp;
-	margin-bottom: 16dp;
+	padding: 12dp 16dp;
+	margin-bottom: 10dp;
 }
 .setup-row {
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	margin-bottom: 10dp;
+	margin-bottom: 8dp;
 }
 .setup-lbl {
 	width: 140dp;
@@ -277,9 +277,9 @@ button:hover { background-color: #232d3c; }
 	background-color: #0d1219;
 	border: 1dp #1e2733;
 	border-radius: 8dp;
-	padding: 14dp 18dp;
-	margin-top: 14dp;
-	margin-bottom: 14dp;
+	padding: 10dp 14dp;
+	margin-top: 10dp;
+	margin-bottom: 10dp;
 }
 .setup-progress-head {
 	display: flex;
@@ -350,7 +350,7 @@ button:hover { background-color: #232d3c; }
 			<div class="firstrun-title">First-Time Setup: Street Fighter Alpha 2 Gold</div>
 			<div class="firstrun-desc">
 				To comply with clean-room legal requirements, game assets and combat overlays are compiled locally on your machine.
-				Select your legitimate PlayStation disc image below to extract the executable, recompile MIPS code, and generate native 60 FPS combat overlays in ~8 seconds.
+				Select your PlayStation disc image and BIOS file below. Once both files are verified, start compilation to extract the executable, recompile MIPS code, and generate native combat overlays in ~8 seconds.
 			</div>
 
 			<div class="setup-box">
@@ -366,6 +366,23 @@ button:hover { background-color: #232d3c; }
 						<span class="check"><span class="check-icon" data-class-on="v_header"></span><span class="check-lbl">ISO9660 Header</span></span>
 						<span class="check"><span class="check-icon" data-class-on="v_crc"></span><span class="check-lbl">Serial ({{disc_serial}})</span></span>
 						<span class="check"><span class="check-icon" data-class-on="v_verified"></span><span class="check-lbl">Disc Verified</span></span>
+					</div>
+				</div>
+			</div>
+
+			<div class="setup-box">
+				<div class="setup-row">
+					<span class="setup-lbl">PSX BIOS:</span>
+					<span class="setup-val" data-if="bios_path != ''">{{bios_file}}</span>
+					<span class="setup-val path empty" data-if="bios_path == ''">Please select your PlayStation BIOS (SCPH1001.BIN / 512 KB)</span>
+					<button data-event-click="browse_bios">Browse BIOS</button>
+				</div>
+				<div class="results" data-if="bios_path != ''">
+					<div class="results-title">BIOS VALIDATION</div>
+					<div class="checks">
+						<span class="check"><span class="check-icon" data-class-on="v_bios_size"></span><span class="check-lbl">512 KB ROM</span></span>
+						<span class="check"><span class="check-icon" data-class-on="v_bios_crc"></span><span class="check-lbl">{{bios_desc}}</span></span>
+						<span class="check"><span class="check-icon" data-class-on="v_bios_verified"></span><span class="check-lbl">BIOS Verified</span></span>
 					</div>
 				</div>
 			</div>

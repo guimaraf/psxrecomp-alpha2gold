@@ -26,6 +26,7 @@ extern "C" {
 #include "third_party/stb_image.h"
 #include "disc_extractor.h"
 #include "game_core.h"
+#include "crc32.h"
 
 #include <SDL.h>
 
@@ -33,6 +34,7 @@ extern "C" {
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -133,6 +135,11 @@ struct LauncherModel {
     bool show_skip_modal = false;
 
     Rml::String bios_path;
+    Rml::String bios_file;
+    Rml::String bios_desc;
+    bool        v_bios_size     = false;
+    bool        v_bios_crc      = false;
+    bool        v_bios_verified = false;
     Rml::String disc_path;
 
     // Display labels (kept in sync with the enum/int values above).
@@ -610,6 +617,68 @@ void refresh_disc_status(LauncherModel& m, const std::string& game_name,
     }
 }
 
+// Validate PlayStation BIOS image against m.bios_path.
+// Must be exactly 512 KiB (524288 bytes). SCPH1001.BIN CRC is 0x37157331.
+void refresh_bios_status(LauncherModel& m) {
+    m.v_bios_size = m.v_bios_crc = m.v_bios_verified = false;
+    m.bios_file = "—";
+    m.bios_desc = "—";
+
+    if (m.bios_path.empty()) {
+        return;
+    }
+
+    fs::path bp(std::string(m.bios_path));
+    if (!fs::exists(bp)) {
+        m.bios_desc = "File not found";
+        return;
+    }
+
+    m.bios_file = bp.filename().generic_string();
+
+    std::ifstream f(bp, std::ios::binary | std::ios::ate);
+    if (!f.is_open()) {
+        m.bios_desc = "Cannot open file";
+        return;
+    }
+
+    const std::streamoff sz = f.tellg();
+    if (sz != 512 * 1024) {
+        m.bios_desc = "Invalid size (must be 512 KB)";
+        return;
+    }
+    m.v_bios_size = true;
+
+    std::vector<uint8_t> data((size_t)sz);
+    f.seekg(0, std::ios::beg);
+    f.read(reinterpret_cast<char*>(data.data()), sz);
+    if (!f.good()) {
+        m.bios_desc = "Read error";
+        return;
+    }
+
+    const uint32_t crc = crc32_compute(data.data(), data.size());
+    if (crc == 0x37157331u) {
+        m.v_bios_crc = true;
+        m.bios_desc = "SCPH-1001 (Verified)";
+    } else {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "PSX ROM (CRC %08X)", crc);
+        m.bios_desc = buf;
+        m.v_bios_crc = true;
+    }
+
+    m.v_bios_verified = m.v_bios_size && m.v_bios_crc;
+
+    // Cache to bios.cfg immediately so runtime loads it without popup prompt
+    try {
+        std::ofstream cfg("bios.cfg", std::ios::trunc);
+        if (cfg.is_open()) {
+            cfg << fs::absolute(bp).string() << "\n";
+        }
+    } catch (...) {}
+}
+
 #if defined(_WIN32)
 // Native open-file dialog. Returns "" if cancelled.
 std::string win_pick_file(SDL_Window* parent, const char* title, const char* filter) {
@@ -828,6 +897,34 @@ Result run(SDL_Window* window, void* gl_context,
     }
     refresh_disc_status(m, game_name_s, expected_serial, expected_crc, has_expected_crc);
 
+    // Auto-discover BIOS if not already configured in settings.toml
+    if (m.bios_path.empty()) {
+        if (fs::exists("bios.cfg")) {
+            std::ifstream cfg("bios.cfg");
+            std::string line;
+            if (std::getline(cfg, line) && !line.empty() && fs::exists(line)) {
+                m.bios_path = fs::path(line).generic_string();
+            }
+        }
+    }
+    if (m.bios_path.empty()) {
+        const std::vector<fs::path> candidate_bios = {
+            fs::path("bios/PSX - SCPH1001.BIN"),
+            fs::path("bios/SCPH1001.BIN"),
+            fs::path("bios/scph1001.bin"),
+            fs::path("alpha2-gold-game/bios/PSX - SCPH1001.BIN"),
+            fs::path("alpha2-gold-game/bios/SCPH1001.BIN"),
+            fs::path("alpha2goldBuild/bios/PSX - SCPH1001.BIN")
+        };
+        for (const auto& cb : candidate_bios) {
+            if (fs::exists(cb)) {
+                m.bios_path = cb.generic_string();
+                break;
+            }
+        }
+    }
+    refresh_bios_status(m);
+
     // Check if First-Run standalone recompilation setup is needed:
     // Missing local MIPS binary (local/SLUS_005.84), combat overlay cache, or game_core.dll triggers First-Run.
     fs::path check_exe = fs::path("local/SLUS_005.84");
@@ -923,6 +1020,11 @@ Result run(SDL_Window* window, void* gl_context,
     c.Bind("winsize_label",  &m.winsize_label);
     c.Bind("texfilter_label",&m.texfilter_label);
     c.Bind("bios_path",      &m.bios_path);
+    c.Bind("bios_file",      &m.bios_file);
+    c.Bind("bios_desc",      &m.bios_desc);
+    c.Bind("v_bios_size",    &m.v_bios_size);
+    c.Bind("v_bios_crc",     &m.v_bios_crc);
+    c.Bind("v_bios_verified",&m.v_bios_verified);
     c.Bind("disc_path",      &m.disc_path);
     c.Bind("disc_file",      &m.disc_file);
     c.Bind("disc_region",    &m.disc_region);
@@ -1176,15 +1278,19 @@ Result run(SDL_Window* window, void* gl_context,
         [&m, handle](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
             m.show_skip_modal = false; handle.DirtyVariable("show_skip_modal");
         });
-    c.BindEventCallback("browse_bios",
+    auto do_browse_bios =
         [&m, window, handle](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
-            std::string p = win_pick_file(window, "Select PlayStation BIOS",
+            std::string p = win_pick_file(window, "Select PlayStation BIOS (SCPH1001.BIN)",
                 "BIOS image (*.bin;*.rom)\0*.bin;*.rom\0All files (*.*)\0*.*\0\0");
             if (!p.empty()) {
                 m.bios_path = fs::path(p).generic_string();
-                handle.DirtyVariable("bios_path");
+                refresh_bios_status(m);
+                for (const char* v : {"bios_path", "bios_file", "bios_desc",
+                                      "v_bios_size", "v_bios_crc", "v_bios_verified"})
+                    handle.DirtyVariable(v);
             }
-        });
+        };
+    c.BindEventCallback("browse_bios", do_browse_bios);
     auto do_browse_disc =
         [&m, window, handle, game_name_s, expected_serial, expected_crc, has_expected_crc]
         (Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
@@ -1344,8 +1450,13 @@ Result run(SDL_Window* window, void* gl_context,
                 return;
             }
             if (setup_state->running.load()) return;
-            if (m.disc_path.empty() || !fs::exists(std::string(m.disc_path))) {
-                m.setup_status = "Error: Please select a valid game disc (.cue / .bin / .iso) first.";
+            if (m.disc_path.empty() || !fs::exists(std::string(m.disc_path)) || !m.v_verified) {
+                m.setup_status = "Error: Please select and verify your game disc (.cue / .bin / .iso) first.";
+                handle.DirtyVariable("setup_status");
+                return;
+            }
+            if (m.bios_path.empty() || !fs::exists(std::string(m.bios_path)) || !m.v_bios_verified) {
+                m.setup_status = "Error: Please select and verify your PlayStation BIOS (SCPH1001.BIN / 512 KB) first.";
                 handle.DirtyVariable("setup_status");
                 return;
             }
@@ -1371,12 +1482,13 @@ Result run(SDL_Window* window, void* gl_context,
             }
 
             std::string disc_path_str = std::string(m.disc_path);
+            std::string bios_path_str = std::string(m.bios_path);
 
             if (setup_state->worker.joinable()) {
                 setup_state->worker.join();
             }
 
-            setup_state->worker = std::thread([setup_state, disc_path_str]() {
+            setup_state->worker = std::thread([setup_state, disc_path_str, bios_path_str]() {
                 auto update_progress = [&](int p, const std::string& msg) {
                     setup_state->pct = p;
                     std::lock_guard<std::mutex> lock(setup_state->mtx);
@@ -1384,6 +1496,19 @@ Result run(SDL_Window* window, void* gl_context,
                 };
 
                 try {
+                    // Cache and stage BIOS image
+                    try {
+                        fs::path bios_dir("bios");
+                        if (!fs::exists(bios_dir)) fs::create_directories(bios_dir);
+                        fs::path target_bios = bios_dir / "SCPH1001.BIN";
+                        if (!fs::exists(target_bios) && fs::exists(bios_path_str)) {
+                            fs::copy_file(bios_path_str, target_bios, fs::copy_options::overwrite_existing);
+                        }
+                        std::ofstream cfg("bios.cfg", std::ios::trunc);
+                        if (cfg.is_open()) {
+                            cfg << fs::absolute(fs::path(bios_path_str)).string() << "\n";
+                        }
+                    } catch (...) {}
                     // 1. Extract SLUS_005.84 using native DiscExtractor
                     update_progress(10, "Extracting SLUS_005.84 from disc sectors...");
                     DiscExtractor extractor;

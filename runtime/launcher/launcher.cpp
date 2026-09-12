@@ -1413,9 +1413,11 @@ Result run(SDL_Window* window, void* gl_context,
                     update_progress(30, "Recompiling MIPS to native C code with psxrecomp-game...");
                     fs::path recompiler_exe = "psxrecomp/recompiler/build/psxrecomp-game.exe";
                     if (!fs::exists(recompiler_exe)) recompiler_exe = "overlay_toolchain/psxrecomp-game.exe";
+                    if (!fs::exists(recompiler_exe)) recompiler_exe = "../overlay_toolchain/psxrecomp-game.exe";
                     if (!fs::exists(recompiler_exe)) recompiler_exe = "psxrecomp-game.exe";
 
                     if (fs::exists(recompiler_exe)) {
+                        recompiler_exe = fs::absolute(recompiler_exe).make_preferred();
                         std::string cmd = "\"" + recompiler_exe.string() + "\" --config game.toml";
                         int rc = std::system(cmd.c_str());
                         if (rc != 0) {
@@ -1429,8 +1431,11 @@ Result run(SDL_Window* window, void* gl_context,
                     // 3. Compile Combat Overlays using TCC
                     update_progress(60, "Compiling combat overlay DLLs with TCC (~178 shards)...");
                     fs::path overlay_bat = "tools/compile_tcc_overlays.bat";
+                    if (!fs::exists(overlay_bat)) overlay_bat = "../tools/compile_tcc_overlays.bat";
                     if (fs::exists(overlay_bat)) {
-                        int rc = std::system(overlay_bat.string().c_str());
+                        overlay_bat = fs::absolute(overlay_bat).make_preferred();
+                        std::string cmd = "\"" + overlay_bat.string() + "\"";
+                        int rc = std::system(cmd.c_str());
                         if (rc != 0) {
                             std::fprintf(stderr, "launcher: overlay compilation returned %d\n", rc);
                         }
@@ -1439,8 +1444,11 @@ Result run(SDL_Window* window, void* gl_context,
                     // 4. Compile Recompiled Game Core into game_core.dll using TCC
                     update_progress(80, "Compiling game_core.dll with TinyCC (~8 seconds)...");
                     fs::path core_bat = "tools/compile_game_core.bat";
+                    if (!fs::exists(core_bat)) core_bat = "../tools/compile_game_core.bat";
                     if (fs::exists(core_bat)) {
-                        int rc = std::system(core_bat.string().c_str());
+                        core_bat = fs::absolute(core_bat).make_preferred();
+                        std::string cmd = "\"" + core_bat.string() + "\"";
+                        int rc = std::system(cmd.c_str());
                         if (rc != 0) {
                             update_progress(0, "Game core compilation failed (exit " + std::to_string(rc) + ").");
                             setup_state->failed = true;

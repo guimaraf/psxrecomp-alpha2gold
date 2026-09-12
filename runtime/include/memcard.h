@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_MEMCARD_H
+#ifndef PSXRECOMP_MEMCARD_H
 #define PSXRECOMP_MEMCARD_H
 
 #include <stdint.h>

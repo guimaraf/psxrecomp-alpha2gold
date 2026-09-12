@@ -1,4 +1,4 @@
-﻿/*
+/*
  * starvation_ring.h — Always-on diagnostic ring for capturing SIO/MMIO
  * state immediately before a TCP-starvation hang.
  *

@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_TIMERS_H
+#ifndef PSXRECOMP_TIMERS_H
 #define PSXRECOMP_TIMERS_H
 
 #include <stdint.h>

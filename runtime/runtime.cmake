@@ -1,4 +1,4 @@
-﻿# Shared psxrecomp runtime CMake helpers.
+# Shared psxrecomp runtime CMake helpers.
 #
 # Include this from either the framework runtime build or a sibling game
 # project. Call psxrecomp_add_runtime_target() after SDL2 detection has
@@ -475,6 +475,7 @@ function(psxrecomp_add_runtime_target target)
         psxrecomp_ensure_launcher_libs()
         target_sources(${target} PRIVATE
             ${PSXRECOMP_ROOT}/runtime/launcher/launcher.cpp
+            ${PSXRECOMP_ROOT}/runtime/launcher/disc_extractor.cpp
             ${PSXRECOMP_ROOT}/runtime/launcher/stb_image_impl.cpp
             ${PSXRECOMP_ROOT}/lib/RmlUi/Backends/RmlUi_Platform_SDL.cpp
             ${PSXRECOMP_ROOT}/lib/RmlUi/Backends/RmlUi_Renderer_GL3.cpp

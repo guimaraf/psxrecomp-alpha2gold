@@ -1,4 +1,4 @@
-﻿/* psx_interpreter.h — R3000A interpreter for oracle builds.
+/* psx_interpreter.h — R3000A interpreter for oracle builds.
  *
  * Oracle-only: provides a cycle-accurate reference implementation
  * of the PSX CPU. Shares the same CPUState and memory bus as the

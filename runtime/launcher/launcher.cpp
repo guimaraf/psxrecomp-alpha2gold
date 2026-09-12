@@ -24,15 +24,19 @@ extern "C" {
 #include "RmlUi_Renderer_GL3.h"
 
 #include "third_party/stb_image.h"
+#include "disc_extractor.h"
 
 #include <SDL.h>
 
+#include <atomic>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -195,6 +199,15 @@ struct LauncherModel {
     // data-for view does not capture inner-xml in this build; data-rml is the
     // robust path and the markup is fully launcher-controlled.)
     Rml::String mc1_grid, mc2_grid;
+
+    // First-Run setup state (Zero-install standalone pipeline)
+    bool        setup_needed      = false;
+    bool        setup_running     = false;
+    bool        setup_complete    = false;
+    int         setup_pct         = 0;
+    Rml::String setup_pct_str     = "0%";
+    Rml::String setup_status      = "Ready to compile.";
+    Rml::String setup_button_text = "COMPILE & LAUNCH";
 
     bool launch_requested = false;
     bool quit_requested   = false;
@@ -796,7 +809,34 @@ Result run(SDL_Window* window, void* gl_context,
     m.disc_path      = io.has_disc_path ? io.disc_path.generic_string() : Rml::String();
     refresh_labels(m);
     const std::string game_name_s = game.name ? game.name : "";
+
+    // Auto-discover disc if not already configured in settings.toml
+    if (m.disc_path.empty()) {
+        const std::vector<fs::path> candidate_discs = {
+            fs::path("alpha2-gold-game/disc/Street Fighter Collection (USA) (Disc 2).cue"),
+            fs::path("disc/Street Fighter Collection (USA) (Disc 2).cue"),
+            fs::path("alpha2-gold-game/disc/Street Fighter Collection (USA) (Disc 2).bin"),
+            fs::path("disc/Street Fighter Collection (USA) (Disc 2).bin")
+        };
+        for (const auto& cd : candidate_discs) {
+            if (fs::exists(cd)) {
+                m.disc_path = cd.generic_string();
+                break;
+            }
+        }
+    }
     refresh_disc_status(m, game_name_s, expected_serial, expected_crc, has_expected_crc);
+
+    // Check if First-Run standalone recompilation setup is needed:
+    // Missing local MIPS binary (local/SLUS_005.84) or missing combat overlay cache triggers First-Run.
+    fs::path check_exe = fs::path("local/SLUS_005.84");
+    fs::path check_cache = fs::path("alpha2-gold-game/cache/SLUS-00584");
+    if (!fs::exists(check_cache)) check_cache = fs::path("cache/SLUS-00584");
+
+    if (!fs::exists(check_exe) || !fs::exists(check_cache)) {
+        m.setup_needed = true;
+        m.view = "first_run";
+    }
 
     // ---- Seed the memory-card slots from the effective settings ----
     if (io.has_memcard1_enabled) m.mc1_enabled = io.memcard1_enabled;
@@ -890,6 +930,13 @@ Result run(SDL_Window* window, void* gl_context,
     c.Bind("verdict_detail", &m.verdict_detail);
     c.Bind("verdict_state",  &m.verdict_state);
     c.Bind("view",           &m.view);
+    c.Bind("setup_needed",      &m.setup_needed);
+    c.Bind("setup_running",     &m.setup_running);
+    c.Bind("setup_complete",    &m.setup_complete);
+    c.Bind("setup_pct",         &m.setup_pct);
+    c.Bind("setup_pct_str",     &m.setup_pct_str);
+    c.Bind("setup_status",      &m.setup_status);
+    c.Bind("setup_button_text", &m.setup_button_text);
     c.Bind("cfg_player",     &m.cfg_player);
     c.Bind("cfg_player_label", &m.cfg_player_label);
     c.Bind("p1_mode",        &m.p1_mode);
@@ -1273,6 +1320,125 @@ Result run(SDL_Window* window, void* gl_context,
     c.BindEventCallback("quit",
         [&m](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { m.quit_requested = true; });
 
+    // ---- First-Run Setup Worker State & Callback ----
+    struct SetupWorkerState {
+        std::atomic<bool> running{false};
+        std::atomic<bool> complete{false};
+        std::atomic<bool> failed{false};
+        std::atomic<int>  pct{0};
+        std::mutex        mtx;
+        std::string       status{"Ready to compile."};
+        std::thread       worker;
+    };
+    auto setup_state = std::make_shared<SetupWorkerState>();
+
+    c.BindEventCallback("start_setup",
+        [&m, handle, setup_state](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+            if (setup_state->running.load() || m.setup_complete) return;
+            if (m.disc_path.empty() || !fs::exists(std::string(m.disc_path))) {
+                m.setup_status = "Error: Please select a valid game disc (.cue / .bin / .iso) first.";
+                handle.DirtyVariable("setup_status");
+                return;
+            }
+
+            m.setup_running = true;
+            m.setup_button_text = "COMPILING...";
+            m.setup_pct = 5;
+            m.setup_pct_str = "5%";
+            m.setup_status = "Starting local recompilation pipeline...";
+            handle.DirtyVariable("setup_running");
+            handle.DirtyVariable("setup_button_text");
+            handle.DirtyVariable("setup_pct");
+            handle.DirtyVariable("setup_pct_str");
+            handle.DirtyVariable("setup_status");
+
+            setup_state->running = true;
+            setup_state->complete = false;
+            setup_state->failed = false;
+            setup_state->pct = 5;
+            {
+                std::lock_guard<std::mutex> lock(setup_state->mtx);
+                setup_state->status = "Starting pipeline...";
+            }
+
+            std::string disc_path_str = std::string(m.disc_path);
+
+            if (setup_state->worker.joinable()) {
+                setup_state->worker.join();
+            }
+
+            setup_state->worker = std::thread([setup_state, disc_path_str]() {
+                auto update_progress = [&](int p, const std::string& msg) {
+                    setup_state->pct = p;
+                    std::lock_guard<std::mutex> lock(setup_state->mtx);
+                    setup_state->status = msg;
+                };
+
+                try {
+                    // 1. Extract SLUS_005.84 using native DiscExtractor
+                    update_progress(10, "Extracting SLUS_005.84 from disc sectors...");
+                    DiscExtractor extractor;
+                    if (!extractor.open(disc_path_str)) {
+                        update_progress(0, "Failed to open disc image.");
+                        setup_state->failed = true;
+                        setup_state->running = false;
+                        return;
+                    }
+
+                    fs::path local_dir("local");
+                    if (!fs::exists(local_dir)) fs::create_directories(local_dir);
+                    fs::path out_exe = local_dir / "SLUS_005.84";
+
+                    if (!extractor.extract_primary_exe(out_exe, [&](float frac, const std::string&) {
+                        int p = 10 + static_cast<int>(frac * 15.0f);
+                        update_progress(p, "Extracting SLUS_005.84 from disc sectors...");
+                    })) {
+                        update_progress(0, "Failed to extract SLUS_005.84 from disc.");
+                        setup_state->failed = true;
+                        setup_state->running = false;
+                        return;
+                    }
+                    extractor.close();
+
+                    // 2. Run static recompiler
+                    update_progress(30, "Recompiling MIPS to native C code with psxrecomp-game...");
+                    fs::path recompiler_exe = "psxrecomp/recompiler/build/psxrecomp-game.exe";
+                    if (!fs::exists(recompiler_exe)) recompiler_exe = "overlay_toolchain/psxrecomp-game.exe";
+                    if (!fs::exists(recompiler_exe)) recompiler_exe = "psxrecomp-game.exe";
+
+                    if (fs::exists(recompiler_exe)) {
+                        std::string cmd = "\"" + recompiler_exe.string() + "\" --config game.toml";
+                        int rc = std::system(cmd.c_str());
+                        if (rc != 0) {
+                            update_progress(0, "Static recompilation failed (exit " + std::to_string(rc) + ").");
+                            setup_state->failed = true;
+                            setup_state->running = false;
+                            return;
+                        }
+                    }
+
+                    // 3. Compile Combat Overlays using TCC
+                    update_progress(60, "Compiling combat overlay DLLs with TCC (~178 shards)...");
+                    fs::path overlay_bat = "tools/compile_tcc_overlays.bat";
+                    if (fs::exists(overlay_bat)) {
+                        int rc = std::system(overlay_bat.string().c_str());
+                        if (rc != 0) {
+                            std::fprintf(stderr, "launcher: overlay compilation returned %d\n", rc);
+                        }
+                    }
+
+                    // 4. Finished
+                    update_progress(100, "Setup complete! Launching Street Fighter Alpha 2 Gold...");
+                    setup_state->complete = true;
+                    setup_state->running = false;
+                } catch (const std::exception& e) {
+                    update_progress(0, std::string("Error: ") + e.what());
+                    setup_state->failed = true;
+                    setup_state->running = false;
+                }
+            });
+        });
+
     // ---- Load the document ----
     const fs::path rml = assets / "launcher.rml";
     Rml::ElementDocument* doc = context->LoadDocument(rml.generic_string());
@@ -1365,6 +1531,53 @@ Result run(SDL_Window* window, void* gl_context,
         // listener's dispatch).
         if (rebuild_pending) { rebuild_pending = false; build_rebind_list(); }
 
+        // Sync asynchronous first-run setup pipeline state
+        if (setup_state->running.load()) {
+            const int cur_pct = setup_state->pct.load();
+            if (cur_pct != m.setup_pct) {
+                m.setup_pct = cur_pct;
+                m.setup_pct_str = std::to_string(cur_pct) + "%";
+                handle.DirtyVariable("setup_pct");
+                handle.DirtyVariable("setup_pct_str");
+            }
+            std::string cur_stat;
+            {
+                std::lock_guard<std::mutex> lock(setup_state->mtx);
+                cur_stat = setup_state->status;
+            }
+            if (cur_stat != std::string(m.setup_status)) {
+                m.setup_status = cur_stat;
+                handle.DirtyVariable("setup_status");
+            }
+        } else if (setup_state->complete.load() && !m.setup_complete) {
+            m.setup_running = false;
+            m.setup_complete = true;
+            m.setup_pct = 100;
+            m.setup_pct_str = "100%";
+            m.setup_status = "Setup complete! Launching...";
+            m.setup_button_text = "LAUNCHING...";
+            handle.DirtyVariable("setup_running");
+            handle.DirtyVariable("setup_complete");
+            handle.DirtyVariable("setup_pct");
+            handle.DirtyVariable("setup_pct_str");
+            handle.DirtyVariable("setup_status");
+            handle.DirtyVariable("setup_button_text");
+
+            m.view = "dashboard";
+            handle.DirtyVariable("view");
+            m.launch_requested = true;
+        } else if (setup_state->failed.load() && m.setup_running) {
+            m.setup_running = false;
+            m.setup_button_text = "RETRY COMPILATION";
+            {
+                std::lock_guard<std::mutex> lock(setup_state->mtx);
+                m.setup_status = setup_state->status;
+            }
+            handle.DirtyVariable("setup_running");
+            handle.DirtyVariable("setup_button_text");
+            handle.DirtyVariable("setup_status");
+        }
+
         context->Update();
 
         render_interface.Clear();
@@ -1418,6 +1631,10 @@ Result run(SDL_Window* window, void* gl_context,
             io.language = game.languages[m.lang_index].code;
             io.has_language = true;
         }
+    }
+
+    if (setup_state->worker.joinable()) {
+        setup_state->worker.join();
     }
 
     Rml::Shutdown();

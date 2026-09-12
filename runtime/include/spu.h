@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_SPU_H
+#ifndef PSXRECOMP_SPU_H
 #define PSXRECOMP_SPU_H
 
 #include <stdint.h>

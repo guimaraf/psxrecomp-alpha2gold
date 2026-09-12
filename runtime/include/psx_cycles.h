@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_PSX_CYCLES_H
+#ifndef PSXRECOMP_PSX_CYCLES_H
 #define PSXRECOMP_PSX_CYCLES_H
 
 #include <stdint.h>

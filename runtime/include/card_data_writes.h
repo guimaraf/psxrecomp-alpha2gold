@@ -1,4 +1,4 @@
-﻿/*
+/*
  * card_data_writes.h — always-on capture of where the BIOS stores
  * incoming SIO data bytes during memory-card READ_DATA.
  *

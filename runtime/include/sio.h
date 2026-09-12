@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_SIO_H
+#ifndef PSXRECOMP_SIO_H
 #define PSXRECOMP_SIO_H
 
 #include <stdint.h>

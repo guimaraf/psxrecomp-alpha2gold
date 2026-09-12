@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_CDROM_H
+#ifndef PSXRECOMP_CDROM_H
 #define PSXRECOMP_CDROM_H
 
 #include <stdint.h>

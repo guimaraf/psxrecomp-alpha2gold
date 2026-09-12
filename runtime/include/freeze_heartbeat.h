@@ -1,4 +1,4 @@
-﻿/* freeze_heartbeat.h — observability infrastructure.
+/* freeze_heartbeat.h — observability infrastructure.
  *
  * Starts a background thread that snapshots runtime state to
  * `psx_freeze_heartbeat.json` every ~100 ms. Survives main-thread

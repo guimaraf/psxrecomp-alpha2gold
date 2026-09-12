@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_MDEC_H
+#ifndef PSXRECOMP_MDEC_H
 #define PSXRECOMP_MDEC_H
 
 #include <stdint.h>

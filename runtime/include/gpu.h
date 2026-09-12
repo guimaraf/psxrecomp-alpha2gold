@@ -1,4 +1,4 @@
-﻿/* gpu.h — PS1 GPU hardware simulation (Phase 3).
+/* gpu.h — PS1 GPU hardware simulation (Phase 3).
  *
  * Implements GPUSTAT, GP0, GP1, and 1024x512 16-bit VRAM.
  * No rendering to screen — just correct hardware state transitions.

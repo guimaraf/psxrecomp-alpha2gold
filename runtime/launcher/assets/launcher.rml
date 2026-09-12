@@ -220,6 +220,109 @@ button:hover { background-color: #232d3c; }
 .modal-btns button { margin-left: 10dp; }
 .modal-confirm { background-color: #2563eb; border-color: #3b82f6; color: #ffffff; font-weight: bold; }
 .modal-confirm:hover { background-color: #3b82f6; }
+
+/* ---- first run setup view ---- */
+.firstrun-panel {
+	display: block;
+	background-color: #11161f;
+	border: 1dp #1e2733;
+	border-radius: 12dp;
+	padding: 22dp 26dp;
+	margin-bottom: 14dp;
+}
+.firstrun-title {
+	display: block;
+	font-size: 24dp;
+	font-weight: bold;
+	color: #ffffff;
+	margin-bottom: 8dp;
+}
+.firstrun-desc {
+	display: block;
+	color: #9aa4b2;
+	font-size: 14dp;
+	line-height: 20dp;
+	margin-bottom: 18dp;
+}
+.setup-box {
+	display: block;
+	background-color: #161d28;
+	border: 1dp #2b3543;
+	border-radius: 9dp;
+	padding: 16dp 20dp;
+	margin-bottom: 16dp;
+}
+.setup-row {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	margin-bottom: 10dp;
+}
+.setup-lbl {
+	width: 140dp;
+	flex: 0 0 140dp;
+	color: #adbac7;
+	font-weight: bold;
+	font-size: 13dp;
+}
+.setup-val {
+	flex: 1 1 auto;
+	color: #ffffff;
+	font-size: 14dp;
+	white-space: nowrap;
+	overflow: hidden;
+}
+.setup-progress-card {
+	display: block;
+	background-color: #0d1219;
+	border: 1dp #1e2733;
+	border-radius: 8dp;
+	padding: 14dp 18dp;
+	margin-top: 14dp;
+	margin-bottom: 14dp;
+}
+.setup-progress-head {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	margin-bottom: 8dp;
+}
+.setup-status-txt {
+	flex: 1 1 auto;
+	color: #4493f8;
+	font-size: 14dp;
+	font-weight: bold;
+}
+.setup-pct-txt {
+	color: #e6e9ef;
+	font-size: 14dp;
+	font-weight: bold;
+}
+.progress-bar-wrap {
+	display: block;
+	width: 100%;
+	height: 12dp;
+	background-color: #1b2330;
+	border-radius: 6dp;
+	overflow: hidden;
+}
+.progress-bar-fill {
+	display: block;
+	height: 100%;
+	background-color: #2563eb;
+	border-radius: 6dp;
+}
+.compile-btn {
+	background-color: #2563eb;
+	border-color: #3b82f6;
+	color: #ffffff;
+	font-weight: bold;
+	font-size: 16dp;
+	padding: 12dp 34dp;
+	border-radius: 8dp;
+}
+.compile-btn:hover { background-color: #3b82f6; }
+.compile-btn:disabled { opacity: 0.5; }
 </style>
 </head>
 
@@ -237,6 +340,50 @@ button:hover { background-color: #232d3c; }
 			<button class="top-btn" data-if="view == 'dashboard'" data-event-click="show_settings">Settings</button>
 			<button class="top-btn primary" data-if="view == 'settings'" data-event-click="show_dashboard">‹ Back to dashboard</button>
 			<button class="top-btn primary" data-if="view == 'controls'" data-event-click="show_dashboard">‹ Back to dashboard</button>
+		</div>
+	</div>
+
+	<!-- ================= FIRST-RUN SETUP VIEW ================= -->
+	<div data-if="view == 'first_run'">
+		<div class="firstrun-panel">
+			<div class="eyebrow">STANDALONE LOCAL PIPELINE</div>
+			<div class="firstrun-title">First-Time Setup: Street Fighter Alpha 2 Gold</div>
+			<div class="firstrun-desc">
+				To comply with clean-room legal requirements, game assets and combat overlays are compiled locally on your machine.
+				Select your legitimate PlayStation disc image below to extract the executable, recompile MIPS code, and generate native 60 FPS combat overlays in ~8 seconds.
+			</div>
+
+			<div class="setup-box">
+				<div class="setup-row">
+					<span class="setup-lbl">DISC IMAGE:</span>
+					<span class="setup-val" data-if="disc_path != ''">{{disc_file}}</span>
+					<span class="setup-val path empty" data-if="disc_path == ''">Please select your game disc (.cue / .bin / .iso)</span>
+					<button data-event-click="browse_disc">Browse Disc</button>
+				</div>
+				<div class="results" data-if="disc_path != ''">
+					<div class="results-title">DISC VALIDATION</div>
+					<div class="checks">
+						<span class="check"><span class="check-icon" data-class-on="v_header"></span><span class="check-lbl">ISO9660 Header</span></span>
+						<span class="check"><span class="check-icon" data-class-on="v_crc"></span><span class="check-lbl">Serial ({{disc_serial}})</span></span>
+						<span class="check"><span class="check-icon" data-class-on="v_verified"></span><span class="check-lbl">Disc Verified</span></span>
+					</div>
+				</div>
+			</div>
+
+			<div class="setup-progress-card">
+				<div class="setup-progress-head">
+					<span class="setup-status-txt">{{setup_status}}</span>
+					<span class="setup-pct-txt">{{setup_pct}}%</span>
+				</div>
+				<div class="progress-bar-wrap">
+					<div class="progress-bar-fill" data-style-width="setup_pct_str"></div>
+				</div>
+			</div>
+
+			<div style="display: flex; flex-direction: row; justify-content: flex-end; margin-top: 14dp;">
+				<button class="compile-btn" data-if="setup_running == false" data-event-click="start_setup">{{setup_button_text}}</button>
+				<button class="compile-btn" data-if="setup_running == true" disabled="disabled">COMPILING...</button>
+			</div>
 		</div>
 	</div>
 
@@ -436,7 +583,7 @@ button:hover { background-color: #232d3c; }
 	</div>
 
 	<!-- ================= FOOTER ================= -->
-	<div class="footer">
+	<div class="footer" data-if="view != 'first_run'">
 		<span class="switch" data-class-on="skip_launcher" data-event-click="toggle_skip_launcher"><span class="knob"></span></span>
 		<span class="skip-lbl">Skip Launcher on Boot</span>
 		<span class="foot-status"><span class="dot"></span><span class="status-txt">Recompiler ready</span></span>

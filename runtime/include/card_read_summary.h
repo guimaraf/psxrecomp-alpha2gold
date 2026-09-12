@@ -1,4 +1,4 @@
-﻿/*
+/*
  * card_read_summary.h — non-evicting evidence ring for the first 32
  * completed memory-card reads.
  *

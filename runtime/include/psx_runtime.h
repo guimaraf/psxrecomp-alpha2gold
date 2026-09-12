@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_PSX_RUNTIME_H
+#ifndef PSXRECOMP_PSX_RUNTIME_H
 #define PSXRECOMP_PSX_RUNTIME_H
 
 #include "cpu_state.h"

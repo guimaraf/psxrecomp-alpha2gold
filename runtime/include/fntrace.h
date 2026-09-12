@@ -1,4 +1,4 @@
-﻿/* fntrace.h — always-on call ring for recomp psx_dispatch.
+/* fntrace.h — always-on call ring for recomp psx_dispatch.
  *
  * Records every entry into psx_dispatch with the caller's argument
  * registers and return address. Mirrors beetle_libretro.cpp's fntrace

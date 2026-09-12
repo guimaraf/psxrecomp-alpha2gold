@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_INTERRUPTS_H
+#ifndef PSXRECOMP_INTERRUPTS_H
 #define PSXRECOMP_INTERRUPTS_H
 
 #include <stdint.h>

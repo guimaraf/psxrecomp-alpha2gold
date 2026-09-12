@@ -1,4 +1,4 @@
-﻿/*
+/*
  * debug_server.h -- TCP debug server for PSX recomp v4
  *
  * Non-blocking TCP server on localhost (default port 4370).

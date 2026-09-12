@@ -1,4 +1,4 @@
-﻿#ifndef PSXRECOMP_CRASH_TRACE_H
+#ifndef PSXRECOMP_CRASH_TRACE_H
 #define PSXRECOMP_CRASH_TRACE_H
 
 #include <stdint.h>

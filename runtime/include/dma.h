@@ -1,4 +1,4 @@
-﻿/* dma.h — PS1 DMA controller simulation (Phase 3).
+/* dma.h — PS1 DMA controller simulation (Phase 3).
  *
  * 7 DMA channels:
  *   Ch0: MDEC in       0x1F801080

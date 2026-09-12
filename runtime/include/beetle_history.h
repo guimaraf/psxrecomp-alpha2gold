@@ -1,4 +1,4 @@
-﻿/* beetle_history.h — psx-beetle per-frame snapshot ring.
+/* beetle_history.h — psx-beetle per-frame snapshot ring.
  *
  * Mirrors runtime/src/debug_server.c's PSXFrameRecord history so beetle
  * exposes the SAME time-series surface as psx-runtime: history,

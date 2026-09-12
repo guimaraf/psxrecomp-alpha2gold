@@ -151,7 +151,17 @@ typedef void   (APIENTRY *PFN_glEnableVertexAttribArray)(GLuint);
 typedef void   (APIENTRY *PFN_glBindFragDataLocationIndexed)(GLuint, GLuint, GLuint, const char *);
 typedef GLsync (APIENTRY *PFN_glFenceSync)(GLenum, GLbitfield);
 typedef void   (APIENTRY *PFN_glWaitSync)(GLsync, GLbitfield, GLuint64);
+typedef GLenum (APIENTRY *PFN_glClientWaitSync)(GLsync, GLbitfield, GLuint64);
 typedef void   (APIENTRY *PFN_glDeleteSync)(GLsync);
+#ifndef GL_SYNC_FLUSH_COMMANDS_BIT
+#define GL_SYNC_FLUSH_COMMANDS_BIT 0x00000001
+#endif
+#ifndef GL_TIMEOUT_EXPIRED
+#define GL_TIMEOUT_EXPIRED         0x911B
+#endif
+#ifndef GL_WAIT_FAILED
+#define GL_WAIT_FAILED            0x911D
+#endif
 typedef void   (APIENTRY *PFN_glGenFramebuffers)(GLsizei, GLuint *);
 typedef void   (APIENTRY *PFN_glDeleteFramebuffers)(GLsizei, const GLuint *);
 typedef void   (APIENTRY *PFN_glBindFramebuffer)(GLenum, GLuint);
@@ -216,6 +226,7 @@ static PFN_glEnableVertexAttribArray p_glEnableVertexAttribArray;
 static PFN_glBindFragDataLocationIndexed p_glBindFragDataLocationIndexed;
 static PFN_glFenceSync p_glFenceSync;
 static PFN_glWaitSync p_glWaitSync;
+static PFN_glClientWaitSync p_glClientWaitSync;
 static PFN_glDeleteSync p_glDeleteSync;
 static PFN_glGenFramebuffers   p_glGenFramebuffers;
 static PFN_glDeleteFramebuffers p_glDeleteFramebuffers;
@@ -269,6 +280,7 @@ static int load_modern_gl(void) {
     LOAD(p_glBindFragDataLocationIndexed, "glBindFragDataLocationIndexed");
     LOAD(p_glFenceSync, "glFenceSync");
     LOAD(p_glWaitSync, "glWaitSync");
+    LOAD(p_glClientWaitSync, "glClientWaitSync");
     LOAD(p_glDeleteSync, "glDeleteSync");
     LOAD(p_glGenFramebuffers, "glGenFramebuffers"); LOAD(p_glBindFramebuffer, "glBindFramebuffer");
     LOAD(p_glDeleteFramebuffers, "glDeleteFramebuffers");
@@ -298,6 +310,8 @@ static SDL_Window   *s_win = NULL;
 static SDL_GLContext s_ctx = NULL;
 static uint16_t     *s_vram = NULL;       /* CPU VRAM array (gpu.c's storage) */
 static int           s_swap_interval = 1; /* SDL_GL swap interval (vsync mode) */
+static int           s_gpu_fence_sync = 1; /* GPU fence sync: limit pre-rendered frame queue to 1 */
+static GLsync        s_frame_fence = NULL;
 
 static int           s_scale = 1;          /* internal-res scale (hr FBO) */
 static int           s_req_scale = 1;      /* requested before context init */
@@ -2303,7 +2317,35 @@ void gl_renderer_set_swap_interval(int interval) {
     }
 }
 
+void gl_renderer_set_fence_sync(int enable) {
+    s_gpu_fence_sync = enable ? 1 : 0;
+}
+
+static void wait_and_delete_frame_fence(void) {
+    if (s_gpu_fence_sync && s_frame_fence && p_glClientWaitSync && p_glDeleteSync) {
+        /* Wait up to 50ms for previous frame GPU completion to limit queue depth to 1 */
+        p_glClientWaitSync(s_frame_fence, GL_SYNC_FLUSH_COMMANDS_BIT, 50000000ULL);
+        p_glDeleteSync(s_frame_fence);
+        s_frame_fence = NULL;
+    }
+}
+
+static void emit_frame_fence(void) {
+    if (s_gpu_fence_sync && p_glFenceSync) {
+        if (s_frame_fence && p_glDeleteSync) {
+            p_glDeleteSync(s_frame_fence);
+            s_frame_fence = NULL;
+        }
+        s_frame_fence = p_glFenceSync(PSXGL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        glFlush();
+    }
+}
+
 void gl_renderer_shutdown(void) {
+    if (s_frame_fence && p_glDeleteSync) {
+        p_glDeleteSync(s_frame_fence);
+        s_frame_fence = NULL;
+    }
     if (s_interp_thread) {
         SDL_AtomicSet(&s_interp_thread_run, 0);
         SDL_WaitThread(s_interp_thread, NULL);
@@ -2344,6 +2386,7 @@ void gl_renderer_shutdown(void) {
 void gl_renderer_present(const uint32_t *pixels, int src_w, int src_h, int linear,
                          int force_4_3) {
     if (!s_ctx) return;
+    wait_and_delete_frame_fence();
     interp_reset_history();
     int ww = 0, wh = 0; SDL_GL_GetDrawableSize(s_win, &ww, &wh);
     glDisable(GL_SCISSOR_TEST);
@@ -2362,9 +2405,11 @@ void gl_renderer_present(const uint32_t *pixels, int src_w, int src_h, int linea
     p_glBindVertexArray(s_present_vao); glDrawArrays(GL_TRIANGLES, 0, 3);
     p_glBindVertexArray(0); p_glUseProgram(0);
     pres_record(GL_PRES_CPU, 0, 0, src_w, src_h, lx, ly, lw, lh);
+    glFlush();
     latency_ring_mark(LAT_SWAP_BEGIN);
     SDL_GL_SwapWindow(s_win);
     latency_ring_mark(LAT_SWAP_END);
+    emit_frame_fence();
     s_last_present_path = GL_PRES_CPU;
 }
 
@@ -3259,6 +3304,7 @@ static void present_target_quad(GLuint tex, int tex_w, int tex_h,
 void gl_renderer_present_vram(int disp_x, int disp_y, int w, int h, int linear,
                               int force_4_3) {
     if (!s_ctx || !s_raster_ok) return;
+    wait_and_delete_frame_fence();
     flush_tex_batch();
     flush_cpu_upload();
     if (s_last_present_path == GL_PRES_VRAM &&
@@ -3295,9 +3341,11 @@ void gl_renderer_present_vram(int disp_x, int disp_y, int w, int h, int linear,
     present_target_quad(s_hr_tex, VRAM_W, VRAM_H,
                         disp_x, disp_y, w, h, linear, lx, ly, lw, lh);
     pres_record(GL_PRES_VRAM, disp_x, disp_y, w, h, lx, ly, lw, lh);
+    glFlush();
     latency_ring_mark(LAT_SWAP_BEGIN);
     SDL_GL_SwapWindow(s_win);
     latency_ring_mark(LAT_SWAP_END);
+    emit_frame_fence();
     gl_perf_present_exit(0);
     present_dirty_rect(disp_x, disp_y, disp_x + w - 1, disp_y + h - 1, 0);
     s_last_present_path = GL_PRES_VRAM;
@@ -3346,6 +3394,7 @@ static void wide_blit_center(GLuint wide_fbo, int base_x, int disp_y, int disp_h
  * (caller falls back). disp_x is the displayed buffer base (the wide-surface key). */
 int gl_renderer_present_wide_fbo(int disp_x, int disp_y, int disp_h, int linear) {
     if (!s_ctx || !s_raster_ok || g_wide_w <= 0) return 0;
+    wait_and_delete_frame_fence();
     GLuint fbo = 0, tex = 0;
     for (int i = 0; i < WIDE_MAX_SURF; i++)
         if (s_wide_fbo[i] && s_wide_base[i] == disp_x) {
@@ -3387,9 +3436,11 @@ int gl_renderer_present_wide_fbo(int disp_x, int disp_y, int disp_h, int linear)
     present_target_quad(tex, g_wide_w, VRAM_H,
                         0, disp_y, g_wide_w, disp_h, linear, lx, ly, lw, lh);
     pres_record(GL_PRES_WIDE, disp_x, disp_y, g_wide_w, disp_h, lx, ly, lw, lh);
+    glFlush();
     latency_ring_mark(LAT_SWAP_BEGIN);
     SDL_GL_SwapWindow(s_win);
     latency_ring_mark(LAT_SWAP_END);
+    emit_frame_fence();
     gl_perf_present_exit(1);
     present_dirty_rect(0, disp_y, VRAM_W - 1, disp_y + disp_h - 1, 0);
     s_last_present_path = GL_PRES_WIDE;

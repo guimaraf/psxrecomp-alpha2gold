@@ -256,12 +256,30 @@ static RuntimeConfig parse_runtime_block(const toml::value& cfg, const fs::path&
             rt.video_low_latency_input = toml::find<bool>(video, "low_latency_input");
         }
         if (video.contains("vsync")) {
-            const auto mode = toml::find<std::string>(video, "vsync");
-            if      (mode == "on"  || mode == "vsync")     rt.video_vsync = 1;
-            else if (mode == "off" || mode == "immediate") rt.video_vsync = 0;
-            else if (mode == "adaptive")                   rt.video_vsync = -1;
-            else throw std::runtime_error(fmt::format(
-                "[video] vsync must be \"on\"|\"off\"|\"immediate\"|\"adaptive\": {}", mode));
+            const auto& vnode = video.at("vsync");
+            if (vnode.is_boolean()) {
+                rt.video_vsync = vnode.as_boolean() ? 1 : 0;
+            } else if (vnode.is_integer()) {
+                rt.video_vsync = (int)vnode.as_integer();
+            } else if (vnode.is_string()) {
+                const std::string mode = vnode.as_string().str;
+                if      (mode == "on"  || mode == "vsync" || mode == "1")     rt.video_vsync = 1;
+                else if (mode == "off" || mode == "immediate" || mode == "0") rt.video_vsync = 0;
+                else if (mode == "adaptive" || mode == "-1")                 rt.video_vsync = -1;
+                else throw std::runtime_error(fmt::format(
+                    "[video] vsync must be boolean or \"on\"|\"off\"|\"immediate\"|\"adaptive\": {}", mode));
+            }
+        }
+        if (video.contains("adaptive_vsync")) {
+            if (toml::find<bool>(video, "adaptive_vsync")) {
+                rt.video_vsync = -1;
+            }
+        }
+        if (video.contains("gpu_fence_sync")) {
+            rt.video_gpu_fence_sync = toml::find<bool>(video, "gpu_fence_sync");
+        }
+        if (video.contains("exclusive_fullscreen")) {
+            rt.video_exclusive_fullscreen = toml::find<bool>(video, "exclusive_fullscreen");
         }
         if (video.contains("frame_interpolation")) {
             rt.video_frame_interpolation =
@@ -1170,10 +1188,33 @@ UserSettings load_user_settings(const fs::path& path) {
             s.has_low_latency_input = true;
         });
         if (v.contains("vsync")) try_get([&]{
-            const auto m = toml::find<std::string>(v, "vsync");
-            if      (m == "on"  || m == "vsync")    { s.vsync = 1;  s.has_vsync = true; }
-            else if (m == "off" || m == "immediate"){ s.vsync = 0;  s.has_vsync = true; }
-            else if (m == "adaptive")               { s.vsync = -1; s.has_vsync = true; }
+            const auto& vnode = v.at("vsync");
+            if (vnode.is_boolean()) {
+                s.vsync = vnode.as_boolean() ? 1 : 0;
+                s.has_vsync = true;
+            } else if (vnode.is_integer()) {
+                s.vsync = (int)vnode.as_integer();
+                s.has_vsync = true;
+            } else if (vnode.is_string()) {
+                const std::string m = vnode.as_string().str;
+                if      (m == "on"  || m == "vsync" || m == "1")    { s.vsync = 1;  s.has_vsync = true; }
+                else if (m == "off" || m == "immediate" || m == "0"){ s.vsync = 0;  s.has_vsync = true; }
+                else if (m == "adaptive" || m == "-1")               { s.vsync = -1; s.has_vsync = true; }
+            }
+        });
+        if (v.contains("adaptive_vsync")) try_get([&]{
+            if (toml::find<bool>(v, "adaptive_vsync")) {
+                s.vsync = -1;
+                s.has_vsync = true;
+            }
+        });
+        if (v.contains("gpu_fence_sync")) try_get([&]{
+            s.gpu_fence_sync = toml::find<bool>(v, "gpu_fence_sync");
+            s.has_gpu_fence_sync = true;
+        });
+        if (v.contains("exclusive_fullscreen")) try_get([&]{
+            s.exclusive_fullscreen = toml::find<bool>(v, "exclusive_fullscreen");
+            s.has_exclusive_fullscreen = true;
         });
         if (v.contains("frame_interpolation")) try_get([&]{
             s.frame_interpolation = toml::find<bool>(v, "frame_interpolation");
@@ -1336,6 +1377,10 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
         f << "low_latency_input = " << (s.low_latency_input ? "true" : "false") << "\n";
     if (s.has_vsync)
         f << "vsync             = \"" << (s.vsync == 0 ? "immediate" : s.vsync < 0 ? "adaptive" : "on") << "\"\n";
+    if (s.has_gpu_fence_sync)
+        f << "gpu_fence_sync    = " << (s.gpu_fence_sync ? "true" : "false") << "\n";
+    if (s.has_exclusive_fullscreen)
+        f << "exclusive_fullscreen = " << (s.exclusive_fullscreen ? "true" : "false") << "\n";
     if (s.has_frame_interpolation)
         f << "frame_interpolation = " << (s.frame_interpolation ? "true" : "false") << "\n";
     if (s.has_frame_interpolation_fps)

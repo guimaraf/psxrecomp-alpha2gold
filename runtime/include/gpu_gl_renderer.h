@@ -23,6 +23,9 @@ int  gl_renderer_init_context(struct SDL_Window *win);
  * Safe before or after context creation; applies live when a context exists. */
 void gl_renderer_set_swap_interval(int interval);
 
+/* Enable/disable GPU fence synchronization to limit pre-rendered frames to 1. */
+void gl_renderer_set_fence_sync(int enable);
+
 /* Presentation-only frame interpolation. High-refresh sub-presents blend the
  * two most recent stable display images; guest simulation timing is unchanged. */
 void gl_renderer_set_interpolation(int enabled, double host_hz, double target_hz);

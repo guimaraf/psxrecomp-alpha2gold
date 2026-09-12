@@ -312,6 +312,8 @@ static int           g_fmv_skip_no_xa_hold  = 4;
  * it trims the display-side scanout latency the CPU-side ring can't see. */
 static int           g_low_latency_input = 1;
 static int           g_video_vsync        = 1;
+static int           g_exclusive_fullscreen = 0;
+static int           g_gpu_fence_sync     = 1;
 static int           g_frame_interpolation = 0;
 static int           g_frame_interpolation_fps = 0;
 static double        g_host_refresh_hz = 0.0;
@@ -2035,6 +2037,15 @@ static PresRingEntry* present_ring_commit(uint8_t path, uint16_t disp_w,
     return e;
 }
 
+static inline void post_present_low_latency_resample(int override) {
+    if (g_low_latency_input) {
+        SDL_GameControllerUpdate();
+        SDL_PumpEvents();
+        sample_pad_into_sio(override);
+        latency_ring_restamp_input();
+    }
+}
+
 /* Called from gpu_vblank_tick() at each simulated vblank. */
 static void sdl_vblank_present(void) {
 #ifndef PSX_NO_DEBUG_TOOLS
@@ -2144,10 +2155,10 @@ static void sdl_vblank_present(void) {
                  * letterboxes the 640x480 image. */
                 else if ((ev.key.keysym.sym == SDLK_RETURN && (mod & KMOD_ALT)) ||
                          (ev.key.keysym.sym == SDLK_f && (mod & (KMOD_GUI | KMOD_CTRL)))) {
-                    Uint32 is_fs = SDL_GetWindowFlags(sdl_window) &
-                                   SDL_WINDOW_FULLSCREEN_DESKTOP;
-                    SDL_SetWindowFullscreen(sdl_window,
-                        is_fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                    Uint32 flags = SDL_GetWindowFlags(sdl_window);
+                    Uint32 is_fs = flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP);
+                    Uint32 target_fs = g_exclusive_fullscreen ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_FULLSCREEN_DESKTOP;
+                    SDL_SetWindowFullscreen(sdl_window, is_fs ? 0 : target_fs);
                 }
             }
         }
@@ -2453,12 +2464,15 @@ static void sdl_vblank_present(void) {
                  * SW stayed smooth). Falls through to the CPU readout path only if
                  * the wide surface for this buffer doesn't exist yet. */
                 if (gl_renderer_present_wide_fbo((int)di.display_x, (int)di.display_y,
-                                                 (int)h, g_video_aa ? 1 : 0))
+                                                 (int)h, g_video_aa ? 1 : 0)) {
+                    post_present_low_latency_resample(override);
                     return;
+                }
             } else {
                 gl_renderer_present_vram((int)di.display_x, (int)di.display_y,
                                          (int)present_w, (int)h, g_video_aa ? 1 : 0,
                                          (fmv_frame || nw_pin) ? 1 : 0);
+                post_present_low_latency_resample(override);
                 return;
             }
         }
@@ -2490,6 +2504,7 @@ static void sdl_vblank_present(void) {
                                          (int)present_w, (int)h, g_video_aa ? 1 : 0,
                                          (fmv_frame || nw_pin) ? 1 : 0);
             }
+            post_present_low_latency_resample(override);
             return;
         }
 #endif
@@ -2634,6 +2649,7 @@ static void sdl_vblank_present(void) {
     }
     }
 #endif
+    post_present_low_latency_resample(override);
 }
 
 int main(int argc, char** argv) {
@@ -2836,6 +2852,8 @@ int main(int argc, char** argv) {
             g_video_aspect_den = gc.runtime.video_aspect_den;
             g_low_latency_input = gc.runtime.video_low_latency_input ? 1 : 0;
             g_video_vsync       = gc.runtime.video_vsync;
+            g_exclusive_fullscreen = gc.runtime.video_exclusive_fullscreen ? 1 : 0;
+            g_gpu_fence_sync    = gc.runtime.video_gpu_fence_sync ? 1 : 0;
             g_frame_interpolation = gc.runtime.video_frame_interpolation ? 1 : 0;
             g_frame_interpolation_fps = gc.runtime.video_frame_interpolation_fps;
             g_fmv_skip_total_table = gc.runtime.video_fmv_skip_total_table;
@@ -3142,6 +3160,8 @@ int main(int argc, char** argv) {
         if (us.has_deadzone)  resolved_deadzone = us.deadzone;
         if (us.has_low_latency_input) g_low_latency_input = us.low_latency_input ? 1 : 0;
         if (us.has_vsync)             g_video_vsync       = us.vsync;
+        if (us.has_exclusive_fullscreen) g_exclusive_fullscreen = us.exclusive_fullscreen ? 1 : 0;
+        if (us.has_gpu_fence_sync)       g_gpu_fence_sync       = us.gpu_fence_sync ? 1 : 0;
         if (us.has_frame_interpolation)
             g_frame_interpolation = us.frame_interpolation ? 1 : 0;
         if (us.has_frame_interpolation_fps)
@@ -3183,9 +3203,12 @@ int main(int argc, char** argv) {
 
     /* Latency knobs: env overrides win over config (for A/B measurement).
      * PSX_LOW_LATENCY_INPUT=0/1 ; PSX_VSYNC=1(vsync)/0(immediate)/-1(adaptive);
+     * PSX_EXCLUSIVE_FULLSCREEN=0/1 ; PSX_GPU_FENCE_SYNC=0/1;
      * PSX_FRAME_INTERPOLATION=0/1; PSX_FRAME_INTERPOLATION_FPS=0|90+. */
-    if (const char *e = std::getenv("PSX_LOW_LATENCY_INPUT")) g_low_latency_input = atoi(e) ? 1 : 0;
-    if (const char *e = std::getenv("PSX_VSYNC"))             g_video_vsync       = atoi(e);
+    if (const char *e = std::getenv("PSX_LOW_LATENCY_INPUT"))    g_low_latency_input = atoi(e) ? 1 : 0;
+    if (const char *e = std::getenv("PSX_VSYNC"))                g_video_vsync       = atoi(e);
+    if (const char *e = std::getenv("PSX_EXCLUSIVE_FULLSCREEN")) g_exclusive_fullscreen = atoi(e) ? 1 : 0;
+    if (const char *e = std::getenv("PSX_GPU_FENCE_SYNC"))       g_gpu_fence_sync       = atoi(e) ? 1 : 0;
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION"))
         g_frame_interpolation = atoi(e) ? 1 : 0;
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_FPS")) {
@@ -3646,13 +3669,17 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "1");
+    SDL_SetHint("SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS", "0");
     Uint32 win_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
     if (g_video_renderer == 1) win_flags |= SDL_WINDOW_OPENGL;
     if (g_video_renderer == 2) win_flags |= SDL_WINDOW_VULKAN;
-    /* Fullscreen on launch (launcher "Fullscreen on launch" toggle). DESKTOP
-     * fullscreen keeps the desktop resolution and letterboxes the image, matching
-     * the in-game F11 / Alt+Enter hotkey behaviour. */
-    if (g_fullscreen) win_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    /* Fullscreen on launch (launcher "Fullscreen on launch" toggle).
+     * Exclusive fullscreen bypasses the Windows DWM compositor for lower latency;
+     * desktop fullscreen keeps desktop resolution. */
+    if (g_fullscreen) {
+        win_flags |= (g_exclusive_fullscreen ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_FULLSCREEN_DESKTOP);
+    }
     /* Open at the user-chosen window size (default 1280 wide) instead of the
      * old hardcoded 640x480, so the game doesn't boot into a tiny window. The
      * height follows the configured display aspect (4:3 native, wider for the
@@ -3700,6 +3727,7 @@ int main(int argc, char** argv) {
      * this phase) and fall through to the SDL_Renderer present path below. */
     if (g_video_renderer == 1) {
         gl_renderer_set_swap_interval(g_video_vsync);   /* applied at context init */
+        gl_renderer_set_fence_sync(g_gpu_fence_sync);
         g_gl_active = (gl_renderer_init_context(sdl_window) != 0);
         if (!g_gl_active) gr_set_backend(GR_BACKEND_SOFTWARE);
         /* The GL backend establishes its real internal scale HERE (raster init),

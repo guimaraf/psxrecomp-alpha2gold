@@ -215,8 +215,8 @@ struct LauncherModel {
     bool        has_compilers     = false;
     int         setup_pct         = 0;
     Rml::String setup_pct_str     = "0%";
-    Rml::String setup_status      = "Ready to compile.";
-    Rml::String setup_button_text = "COMPILE & LAUNCH";
+    Rml::String setup_status      = "Ready to build release.";
+    Rml::String setup_button_text = "BUILD RELEASE";
 
     bool launch_requested = false;
     bool quit_requested   = false;
@@ -1492,10 +1492,10 @@ Result run(SDL_Window* window, void* gl_context,
             }
 
             m.setup_running = true;
-            m.setup_button_text = "COMPILING...";
+            m.setup_button_text = "BUILDING RELEASE...";
             m.setup_pct = 5;
             m.setup_pct_str = "5%";
-            m.setup_status = "Starting local recompilation pipeline...";
+            m.setup_status = "Starting local release build pipeline...";
             handle.DirtyVariable("setup_running");
             handle.DirtyVariable("setup_button_text");
             handle.DirtyVariable("setup_pct");
@@ -1508,7 +1508,7 @@ Result run(SDL_Window* window, void* gl_context,
             freopen_s(&f_dummy, "CONOUT$", "w", stdout);
             freopen_s(&f_dummy, "CONOUT$", "w", stderr);
             freopen_s(&f_dummy, "CONIN$", "r", stdin);
-            SetConsoleTitleA("Street Fighter Alpha 2 Gold - Compilation");
+            SetConsoleTitleA("Street Fighter Alpha 2 Gold - Release Build");
             HWND hConsole = GetConsoleWindow();
             if (hConsole) {
                 ShowWindow(hConsole, SW_SHOW);
@@ -1791,7 +1791,7 @@ Result run(SDL_Window* window, void* gl_context,
             m.setup_needed = false;
             m.setup_pct = 100;
             m.setup_pct_str = "100%";
-            m.setup_status = "Compilation complete! Game core and combat overlays are ready.";
+            m.setup_status = "Release build complete! Game core and combat overlays are ready.";
             m.setup_button_text = "CONTINUE TO DASHBOARD";
             handle.DirtyVariable("setup_running");
             handle.DirtyVariable("setup_complete");
@@ -1803,7 +1803,7 @@ Result run(SDL_Window* window, void* gl_context,
             // Do not launch automatically: stay in launcher for user review
         } else if (setup_state->failed.load() && m.setup_running) {
             m.setup_running = false;
-            m.setup_button_text = "RETRY COMPILATION";
+            m.setup_button_text = "RETRY BUILD";
             {
                 std::lock_guard<std::mutex> lock(setup_state->mtx);
                 m.setup_status = setup_state->status;

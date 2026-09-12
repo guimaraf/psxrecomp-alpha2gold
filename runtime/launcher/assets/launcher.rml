@@ -411,7 +411,7 @@ button:hover { background-color: #232d3c; }
 			<div style="display: flex; flex-direction: row; justify-content: flex-end; align-items: center; margin-top: 14dp;">
 				<button class="clean-btn" data-if="setup_complete && has_compilers" data-event-click="remove_compilers">REMOVE COMPILERS</button>
 				<button class="compile-btn" data-if="setup_running == false" data-event-click="start_setup">{{setup_button_text}}</button>
-				<button class="compile-btn" data-if="setup_running == true" disabled="disabled">COMPILING...</button>
+				<button class="compile-btn" data-if="setup_running == true" disabled="disabled">BUILDING RELEASE...</button>
 			</div>
 		</div>
 	</div>

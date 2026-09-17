@@ -52,6 +52,7 @@
 #include "disc_identity.h"
 #include "iso_reader.h"      /* text-image guard: extract the boot EXE from the disc */
 #include "psx_keybinds.h"    /* configurable keyboard->DualShock keybinds (keybinds.ini) */
+#include "psx_gamepad_binds.h" /* configurable gamepad->DualShock binds (input.ini) */
 #if defined(PSX_LAUNCHER)
 #include "launcher.h"
 #endif
@@ -1415,6 +1416,7 @@ static void load_input_config(const char* argv0) {
      * first run). The launcher may have just edited+saved this file; we re-read
      * it here so the runtime always reflects the current bindings. */
     psx_keybinds_init(argv0);
+    psx_gamepad_binds_init(argv0);
 }
 
 static void close_player(PlayerInput& p) {
@@ -1627,7 +1629,7 @@ static void axes_to_pad_pair(int16_t vx, int16_t vy, uint8_t* obx, uint8_t* oby)
  * 1 or 2 — selects which keybinds.ini section drives a keyboard port. */
 static uint16_t pad_buttons_for(const PlayerInput& p, int player, bool suppress_stick_axes) {
     if (p.kind == 1) return pad_from_keyboard(player);
-    if (p.kind == 2) return controller_pad_buttons(p.handle, suppress_stick_axes);
+    if (p.kind == 2) return psx_gamepad_binds_pad_word(p.handle, player, suppress_stick_axes ? 1 : 0);
     return 0xFFFF;
 }
 
@@ -1662,10 +1664,11 @@ static void pad_sticks_for(const PlayerInput& p, int player, uint8_t out[4], boo
                          SDL_GameControllerGetAxis(p.handle, SDL_CONTROLLER_AXIS_RIGHTY),
                          &out[2], &out[3]);
         if (fold_dpad) {
-            if (SDL_GameControllerGetButton(p.handle, SDL_CONTROLLER_BUTTON_DPAD_LEFT))  out[0] = 0x00;
-            if (SDL_GameControllerGetButton(p.handle, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) out[0] = 0xFF;
-            if (SDL_GameControllerGetButton(p.handle, SDL_CONTROLLER_BUTTON_DPAD_UP))    out[1] = 0x00;
-            if (SDL_GameControllerGetButton(p.handle, SDL_CONTROLLER_BUTTON_DPAD_DOWN))  out[1] = 0xFF;
+            uint16_t w = psx_gamepad_binds_pad_word(p.handle, player, 1);
+            if (!(w & (1u << 7))) out[0] = 0x00; /* LEFT */
+            if (!(w & (1u << 5))) out[0] = 0xFF; /* RIGHT */
+            if (!(w & (1u << 4))) out[1] = 0x00; /* UP */
+            if (!(w & (1u << 6))) out[1] = 0xFF; /* DOWN */
         }
     }
 }
@@ -1684,10 +1687,7 @@ static bool hybrid_stick_active(const PlayerInput& p) {
 }
 static bool hybrid_dpad_active(const PlayerInput& p, int player, bool kb_always) {
     if (p.kind == 2 && p.handle) {
-        if (SDL_GameControllerGetButton(p.handle, SDL_CONTROLLER_BUTTON_DPAD_LEFT)  ||
-            SDL_GameControllerGetButton(p.handle, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
-            SDL_GameControllerGetButton(p.handle, SDL_CONTROLLER_BUTTON_DPAD_UP)    ||
-            SDL_GameControllerGetButton(p.handle, SDL_CONTROLLER_BUTTON_DPAD_DOWN))
+        if (psx_gamepad_binds_dpad_active(p.handle, player))
             return true;
     }
     if (p.kind == 1 || kb_always) {
@@ -1733,7 +1733,7 @@ static uint16_t dev_all_controllers_buttons(bool suppress_stick_axes) {
         SDL_JoystickID inst = SDL_JoystickGetDeviceInstanceID(i);
         SDL_GameController* h = SDL_GameControllerFromInstanceID(inst);
         if (!h) h = SDL_GameControllerOpen(i);   /* open once; SDL keeps it */
-        if (h) btn &= controller_pad_buttons(h, suppress_stick_axes);
+        if (h) btn &= psx_gamepad_binds_pad_word(h, 1, suppress_stick_axes ? 1 : 0);
     }
     return btn;
 }

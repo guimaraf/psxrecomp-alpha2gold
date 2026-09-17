@@ -13,6 +13,7 @@
 extern "C" {
 #include "memcard.h"
 #include "psx_keybinds.h"
+#include "psx_gamepad_binds.h"
 }
 
 #include <RmlUi/Core.h>
@@ -168,6 +169,13 @@ struct LauncherModel {
     int         cfg_player = 0;
     Rml::String cfg_player_label = "1";
 
+    // Gamepad controls page: which player's gamepad binds are being edited (0=P1,1=P2).
+    int         cfg_gp_player = 0;
+    Rml::String cfg_gp_player_label = "1";
+
+    // Whether any physical gamepad is currently plugged in
+    bool        has_gamepad = false;
+
     // Player cards — real device routing. Each port picks a device (None /
     // Keyboard / a plugged-in SDL controller) and a pad type (DualShock=analog).
     int  p1_dev_index = 1;     // index into the shared device option list
@@ -312,7 +320,14 @@ struct DeviceOption {
     std::string guid;    // SDL joystick GUID string when kind==controller
     int         ordinal; // 0, 1, 2... for devices sharing the same GUID
     std::string label;   // display name
-};
+// Returns true if at least one physical GameController is connected.
+bool has_connected_gamepads() {
+    const int n = SDL_NumJoysticks();
+    for (int i = 0; i < n; i++) {
+        if (SDL_IsGameController(i)) return true;
+    }
+    return false;
+}
 
 std::vector<DeviceOption> enumerate_devices() {
     std::vector<DeviceOption> opts;
@@ -807,6 +822,7 @@ Result run(SDL_Window* window, void* gl_context,
     // exe dir). Load them so the Controls page edits the real, persisted map;
     // the runtime re-reads the same file at startup (psx_keybinds_init).
     psx_keybinds_init(assets_dir);
+    psx_gamepad_binds_init(assets_dir);
 
     const std::string expected_serial = game.expected_serial ? game.expected_serial : "";
     const uint32_t    expected_crc    = game.expected_crc;
@@ -960,6 +976,7 @@ Result run(SDL_Window* window, void* gl_context,
 
     // ---- Seed the controller slots: enumerate devices, resolve selections ----
     std::vector<DeviceOption> dev_opts = enumerate_devices();
+    m.has_gamepad = has_connected_gamepads();
     m.p1_mode = io.has_p1_mode ? io.p1_mode : PSXRecompV4::PAD_MODE_HYBRID;
     m.p2_mode = io.has_p2_mode ? io.p2_mode : PSXRecompV4::PAD_MODE_HYBRID;
     // When the game hides Hybrid, never leave a port selected on it (a stale
@@ -1055,8 +1072,11 @@ Result run(SDL_Window* window, void* gl_context,
     c.Bind("setup_status",      &m.setup_status);
     c.Bind("setup_button_text", &m.setup_button_text);
     c.Bind("has_compilers",     &m.has_compilers);
-    c.Bind("cfg_player",     &m.cfg_player);
-    c.Bind("cfg_player_label", &m.cfg_player_label);
+    c.Bind("has_gamepad",       &m.has_gamepad);
+    c.Bind("cfg_player",        &m.cfg_player);
+    c.Bind("cfg_player_label",  &m.cfg_player_label);
+    c.Bind("cfg_gp_player",     &m.cfg_gp_player);
+    c.Bind("cfg_gp_player_label", &m.cfg_gp_player_label);
     c.Bind("p1_mode",        &m.p1_mode);
     c.Bind("p2_mode",        &m.p2_mode);
     c.Bind("allow_hybrid",   &m.allow_hybrid);
@@ -1117,6 +1137,7 @@ Result run(SDL_Window* window, void* gl_context,
     };
     auto begin_scan = [&](int index, const std::string& chip_id) {
         end_scan();
+        end_gp_scan();
         scan_kind = 1; scan_index = index; scan_chip_id = chip_id;
         if (kbdoc) if (Rml::Element* e = kbdoc->GetElementById(chip_id)) {
             e->SetInnerRML("Press a key...");
@@ -1139,11 +1160,59 @@ Result run(SDL_Window* window, void* gl_context,
         rebuild_pending = true;   // stolen chips refresh too
     };
 
-    c.BindEventCallback("show_controls",
-        [&m, handle, &end_scan, &rebuild_pending](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+    // ---- gamepad keybind rebinding (Gamepad page) ---------------------------
+    Rml::ElementDocument*  gpdoc = nullptr;           // set after LoadDocument
+    std::function<void()>  build_gp_rebind_list;      // set after LoadDocument
+    bool  rebuild_gp_pending = false;
+    int   scan_gp_kind  = 0;                          // 0=idle, 1=capturing
+    int   scan_gp_index = 0;                          // button being rebound
+    std::string scan_gp_chip_id;
+
+    auto gp_chip_label = [&m](int button) -> std::string {
+        char buf[64];
+        psx_gamepad_binds_get_label(m.cfg_gp_player + 1, button, buf, sizeof(buf));
+        return std::string(buf);
+    };
+    auto end_gp_scan = [&]() {
+        if (!scan_gp_kind) return;
+        if (gpdoc) if (Rml::Element* e = gpdoc->GetElementById(scan_gp_chip_id)) {
+            e->SetInnerRML(gp_chip_label(scan_gp_index));
+            e->SetClass("rb-chip--scan", false);
+        }
+        scan_gp_kind = 0; scan_gp_chip_id.clear();
+    };
+    auto begin_gp_scan = [&](int index, const std::string& chip_id) {
+        end_scan();
+        end_gp_scan();
+        scan_gp_kind = 1; scan_gp_index = index; scan_gp_chip_id = chip_id;
+        if (gpdoc) if (Rml::Element* e = gpdoc->GetElementById(chip_id)) {
+            e->SetInnerRML("Press button / trigger...");
+            e->SetClass("rb-chip--scan", true);
+        }
+    };
+    auto handle_gp_scan_source = [&](PsxGamepadSource src) {
+        if (src.kind == PSX_GP_SRC_NONE) return;
+        psx_gamepad_binds_set_source(m.cfg_gp_player + 1, scan_gp_index, src);
+        end_gp_scan();
+        rebuild_gp_pending = true;
+    };
+
+    auto on_show_keyboard = [&m, handle, &end_scan, &end_gp_scan, &rebuild_pending](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+        end_scan();
+        end_gp_scan();
+        m.view = "keyboard"; handle.DirtyVariable("view");
+        rebuild_pending = true;
+    };
+    c.BindEventCallback("show_keyboard", on_show_keyboard);
+    c.BindEventCallback("show_controls", on_show_keyboard);
+    c.BindEventCallback("show_gamepad",
+        [&m, handle, &end_scan, &end_gp_scan, &rebuild_gp_pending](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
             end_scan();
-            m.view = "controls"; handle.DirtyVariable("view");
-            rebuild_pending = true;
+            end_gp_scan();
+            if (m.has_gamepad) {
+                m.view = "gamepad"; handle.DirtyVariable("view");
+                rebuild_gp_pending = true;
+            }
         });
     c.BindEventCallback("cfg_player_1",
         [&m, handle, &end_scan, &rebuild_pending](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
@@ -1165,6 +1234,27 @@ Result run(SDL_Window* window, void* gl_context,
             psx_keybinds_reset_player(m.cfg_player + 1);
             psx_keybinds_save();
             rebuild_pending = true;
+        });
+
+    c.BindEventCallback("cfg_gp_player_1",
+        [&m, handle, &end_gp_scan, &rebuild_gp_pending](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+            end_gp_scan();
+            m.cfg_gp_player = 0; m.cfg_gp_player_label = "1";
+            handle.DirtyVariable("cfg_gp_player"); handle.DirtyVariable("cfg_gp_player_label");
+            rebuild_gp_pending = true;
+        });
+    c.BindEventCallback("cfg_gp_player_2",
+        [&m, handle, &end_gp_scan, &rebuild_gp_pending](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+            end_gp_scan();
+            m.cfg_gp_player = 1; m.cfg_gp_player_label = "2";
+            handle.DirtyVariable("cfg_gp_player"); handle.DirtyVariable("cfg_gp_player_label");
+            rebuild_gp_pending = true;
+        });
+    c.BindEventCallback("gp_rebind_reset",
+        [&m, &end_gp_scan, &rebuild_gp_pending](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+            end_gp_scan();
+            psx_gamepad_binds_reset_player(m.cfg_gp_player + 1);
+            rebuild_gp_pending = true;
         });
 
     c.BindEventCallback("cycle_renderer",
@@ -1321,13 +1411,15 @@ Result run(SDL_Window* window, void* gl_context,
     c.BindEventCallback("change_iso",  do_browse_disc);
 
     c.BindEventCallback("show_settings",
-        [&m, handle, &end_scan](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+        [&m, handle, &end_scan, &end_gp_scan](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
             end_scan();
+            end_gp_scan();
             m.view = "settings"; handle.DirtyVariable("view");
         });
     c.BindEventCallback("show_dashboard",
-        [&m, handle, &end_scan](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+        [&m, handle, &end_scan, &end_gp_scan](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
             end_scan();
+            end_gp_scan();
             m.view = "dashboard"; handle.DirtyVariable("view");
         });
     // ---- controller: device dropdown + pad-mode segmented selector ----
@@ -1336,8 +1428,63 @@ Result run(SDL_Window* window, void* gl_context,
         const char* v1[] = {"p2_dev_label","p2_status","p2_dot","p2_options","p2_mode"};
         for (const char* v : (player == 0 ? v0 : v1)) handle.DirtyVariable(v);
     };
-    // dev_opts is captured by value: the device list is fixed for the launcher
-    // session (a hot-plug here would require a re-enumerate, deferred).
+
+    struct LauncherControllersRAII {
+        std::vector<SDL_GameController*> handles;
+        void close_all() {
+            for (auto* c : handles) {
+                if (c) SDL_GameControllerClose(c);
+            }
+            handles.clear();
+        }
+        void open_all() {
+            close_all();
+            SDL_JoystickEventState(SDL_ENABLE);
+            SDL_GameControllerEventState(SDL_ENABLE);
+            const int n = SDL_NumJoysticks();
+            for (int i = 0; i < n; i++) {
+                if (SDL_IsGameController(i)) {
+                    SDL_GameController* c = SDL_GameControllerOpen(i);
+                    if (c) handles.push_back(c);
+                }
+            }
+        }
+        ~LauncherControllersRAII() {
+            close_all();
+        }
+    } launcher_pads;
+    launcher_pads.open_all();
+
+    auto update_controllers = [&]() {
+        launcher_pads.open_all();
+        const bool gp_connected = has_connected_gamepads();
+        if (m.has_gamepad != gp_connected) {
+            m.has_gamepad = gp_connected;
+            handle.DirtyVariable("has_gamepad");
+        }
+        if (!m.has_gamepad && m.view == "gamepad") {
+            end_gp_scan();
+            m.view = "dashboard";
+            handle.DirtyVariable("view");
+        }
+
+        std::string p1_str = (m.p1_dev_index >= 0 && m.p1_dev_index < (int)dev_opts.size())
+            ? device_string(dev_opts[m.p1_dev_index])
+            : (io.has_p1_device ? io.p1_device : "keyboard");
+        std::string p2_str = (m.p2_dev_index >= 0 && m.p2_dev_index < (int)dev_opts.size())
+            ? device_string(dev_opts[m.p2_dev_index])
+            : (io.has_p2_device ? io.p2_device : "none");
+
+        dev_opts = enumerate_devices();
+        m.p1_dev_index = find_or_add_device_index(dev_opts, p1_str);
+        m.p2_dev_index = find_or_add_device_index(dev_opts, p2_str);
+
+        refresh_player(m, 0, dev_opts);
+        dirty_player(0);
+        refresh_player(m, 1, dev_opts);
+        dirty_player(1);
+    };
+
     c.BindEventCallback("open_dd",
         [&m, handle](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) mutable {
             const int player = args.empty() ? 0 : (int)args[0].Get<int>();
@@ -1346,11 +1493,11 @@ Result run(SDL_Window* window, void* gl_context,
             handle.DirtyVariable("dd_open");
         });
     c.BindEventCallback("close_dd",
-        [&m, handle](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+        [&m, handle](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) mutable {
             m.dd_open = Rml::String(); handle.DirtyVariable("dd_open");
         });
     c.BindEventCallback("pick_device",
-        [&m, handle, dev_opts, dirty_player](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) mutable {
+        [&m, handle, &dev_opts, dirty_player](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) mutable {
             if (args.size() < 2) return;
             const int player = (int)args[0].Get<int>();
             const int idx    = (int)args[1].Get<int>();
@@ -1373,7 +1520,7 @@ Result run(SDL_Window* window, void* gl_context,
     // Pad-mode segmented selector: each segment passes its mode (0=hybrid,
     // 1=analog, 2=digital) so any mode is one click away.
     c.BindEventCallback("set_mode_p1",
-        [&m, handle, dev_opts, dirty_player](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) mutable {
+        [&m, handle, &dev_opts, dirty_player](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) mutable {
             if (args.empty()) return;
             const int mode = (int)args[0].Get<int>();
             const bool deadzone_reset = select_player_pad_mode(m, 0, mode);
@@ -1381,7 +1528,7 @@ Result run(SDL_Window* window, void* gl_context,
             if (deadzone_reset) handle.DirtyVariable("deadzone_pct");
         });
     c.BindEventCallback("set_mode_p2",
-        [&m, handle, dev_opts, dirty_player](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) mutable {
+        [&m, handle, &dev_opts, dirty_player](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) mutable {
             if (args.empty()) return;
             const int mode = (int)args[0].Get<int>();
             const bool deadzone_reset = select_player_pad_mode(m, 1, mode);
@@ -1720,12 +1867,83 @@ Result run(SDL_Window* window, void* gl_context,
     };
     build_rebind_list();
 
+    // ---- build the gamepad rebind chip list (Gamepad page) ----
+    gpdoc = doc;
+    struct GpClickListener : Rml::EventListener {
+        std::function<void()> on_click;
+        void ProcessEvent(Rml::Event&) override { if (on_click) on_click(); }
+    };
+    std::vector<std::unique_ptr<GpClickListener>> gp_listeners;
+    build_gp_rebind_list = [&]() {
+        Rml::Element* list = doc->GetElementById("gp-rebind-list");
+        if (!list) return;
+        const int n = psx_gamepad_binds_button_count();
+        std::string html;
+        for (int b = 0; b < n; b += 2) {          // two (label, chip) pairs per row
+            html += "<div class=\"rb-row\">";
+            for (int k = b; k < b + 2 && k < n; k++) {
+                html += "<span class=\"rb-label\">";
+                html += rml_escape(psx_gamepad_binds_button_label(k));
+                html += "</span><button class=\"rb-chip\" id=\"gp-";
+                html += psx_gamepad_binds_button_name(k);
+                html += "\">" + rml_escape(gp_chip_label(k)) + "</button>";
+            }
+            html += "</div>";
+        }
+        list->SetInnerRML(html);
+        gp_listeners.clear();
+        for (int k = 0; k < n; k++) {
+            const std::string id = std::string("gp-") + psx_gamepad_binds_button_name(k);
+            if (Rml::Element* e = doc->GetElementById(id)) {
+                auto lis = std::make_unique<GpClickListener>();
+                lis->on_click = [&, k, id]() { begin_gp_scan(k, id); };
+                e->AddEventListener(Rml::EventId::Click, lis.get());
+                gp_listeners.push_back(std::move(lis));
+            }
+        }
+    };
+    build_gp_rebind_list();
+
     // ---- Main loop ----
     Result result = Result::Quit;
     bool running = true;
     while (running) {
         SDL_Event ev;
+        bool controllers_dirty = false;
         while (SDL_PollEvent(&ev)) {
+            // While a gamepad rebind scan is armed, swallow controller input and Esc
+            if (scan_gp_kind) {
+                if (ev.type == SDL_KEYDOWN) {
+                    if (ev.key.keysym.sym == SDLK_ESCAPE) end_gp_scan();
+                    continue;
+                }
+                if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
+                    PsxGamepadSource src = psx_gamepad_source_from_button((SDL_GameControllerButton)ev.cbutton.button);
+                    handle_gp_scan_source(src);
+                    continue;
+                }
+                if (ev.type == SDL_CONTROLLERAXISMOTION) {
+                    const int axis = ev.caxis.axis;
+                    const int val = ev.caxis.value;
+                    if (axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) {
+                        if (val > 16384) {
+                            PsxGamepadSource src = psx_gamepad_source_from_axis((SDL_GameControllerAxis)axis, 1);
+                            handle_gp_scan_source(src);
+                        }
+                    } else if (axis == SDL_CONTROLLER_AXIS_LEFTX || axis == SDL_CONTROLLER_AXIS_LEFTY ||
+                               axis == SDL_CONTROLLER_AXIS_RIGHTX || axis == SDL_CONTROLLER_AXIS_RIGHTY) {
+                        if (std::abs(val) > 24000) {
+                            PsxGamepadSource src = psx_gamepad_source_from_axis((SDL_GameControllerAxis)axis, val > 0 ? 1 : -1);
+                            handle_gp_scan_source(src);
+                        }
+                    }
+                    continue;
+                }
+                if (ev.type == SDL_KEYUP || ev.type == SDL_TEXTINPUT || ev.type == SDL_CONTROLLERBUTTONUP) {
+                    continue;
+                }
+            }
+
             // While a rebind scan is armed, swallow keyboard input (the next
             // keydown resolves it; Esc cancels) so it can't leak into RmlUi
             // controls.
@@ -1737,6 +1955,12 @@ Result run(SDL_Window* window, void* gl_context,
             switch (ev.type) {
             case SDL_QUIT:
                 m.quit_requested = true;
+                break;
+            case SDL_CONTROLLERDEVICEADDED:
+            case SDL_CONTROLLERDEVICEREMOVED:
+            case SDL_JOYDEVICEADDED:
+            case SDL_JOYDEVICEREMOVED:
+                controllers_dirty = true;
                 break;
             case SDL_WINDOWEVENT:
                 if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
@@ -1752,13 +1976,25 @@ Result run(SDL_Window* window, void* gl_context,
             }
         }
 
+        // Auto-close Gamepad view if gamepad was removed
+        if (m.view == "gamepad" && !has_connected_gamepads()) {
+            end_gp_scan();
+            controllers_dirty = true;
+        }
+
+        if (controllers_dirty) {
+            controllers_dirty = false;
+            update_controllers();
+        }
+
         if (m.launch_requested) { result = Result::Launch; running = false; }
         if (m.quit_requested)   { result = Result::Quit;   running = false; }
 
         // Deferred chip-list rebuild (set from chip handlers / scan capture /
         // player switch / reset — never rebuild a list from inside its own
         // listener's dispatch).
-        if (rebuild_pending) { rebuild_pending = false; build_rebind_list(); }
+        if (rebuild_pending)    { rebuild_pending = false; build_rebind_list(); }
+        if (rebuild_gp_pending) { rebuild_gp_pending = false; build_gp_rebind_list(); }
 
         // Sync asynchronous first-run setup pipeline state
         if (setup_state->running.load()) {

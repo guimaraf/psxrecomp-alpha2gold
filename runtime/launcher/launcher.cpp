@@ -320,6 +320,8 @@ struct DeviceOption {
     std::string guid;    // SDL joystick GUID string when kind==controller
     int         ordinal; // 0, 1, 2... for devices sharing the same GUID
     std::string label;   // display name
+};
+
 // Returns true if at least one physical GameController is connected.
 bool has_connected_gamepads() {
     const int n = SDL_NumJoysticks();

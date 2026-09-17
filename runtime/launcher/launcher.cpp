@@ -1137,30 +1137,6 @@ Result run(SDL_Window* window, void* gl_context,
         }
         scan_kind = 0; scan_chip_id.clear();
     };
-    auto begin_scan = [&](int index, const std::string& chip_id) {
-        end_scan();
-        end_gp_scan();
-        scan_kind = 1; scan_index = index; scan_chip_id = chip_id;
-        if (kbdoc) if (Rml::Element* e = kbdoc->GetElementById(chip_id)) {
-            e->SetInnerRML("Press a key...");
-            e->SetClass("rb-chip--scan", true);
-        }
-    };
-    auto handle_scan_key = [&](const SDL_KeyboardEvent& ke) {
-        if (ke.keysym.sym == SDLK_ESCAPE) { end_scan(); return; }
-        const SDL_Scancode sc = ke.keysym.scancode;
-        // Steal: a key already bound elsewhere (either player) moves here instead
-        // of silently double-firing.
-        for (int pl = 1; pl <= 2; pl++)
-            for (int b = 0; b < psx_keybinds_button_count(); b++)
-                if (psx_keybinds_get_button(pl, b) == sc &&
-                    !(pl == m.cfg_player + 1 && b == scan_index))
-                    psx_keybinds_set_button(pl, b, SDL_SCANCODE_UNKNOWN);
-        psx_keybinds_set_button(m.cfg_player + 1, scan_index, sc);
-        psx_keybinds_save();
-        end_scan();
-        rebuild_pending = true;   // stolen chips refresh too
-    };
 
     // ---- gamepad keybind rebinding (Gamepad page) ---------------------------
     Rml::ElementDocument*  gpdoc = nullptr;           // set after LoadDocument
@@ -1197,6 +1173,31 @@ Result run(SDL_Window* window, void* gl_context,
         psx_gamepad_binds_set_source(m.cfg_gp_player + 1, scan_gp_index, src);
         end_gp_scan();
         rebuild_gp_pending = true;
+    };
+
+    auto begin_scan = [&](int index, const std::string& chip_id) {
+        end_scan();
+        end_gp_scan();
+        scan_kind = 1; scan_index = index; scan_chip_id = chip_id;
+        if (kbdoc) if (Rml::Element* e = kbdoc->GetElementById(chip_id)) {
+            e->SetInnerRML("Press a key...");
+            e->SetClass("rb-chip--scan", true);
+        }
+    };
+    auto handle_scan_key = [&](const SDL_KeyboardEvent& ke) {
+        if (ke.keysym.sym == SDLK_ESCAPE) { end_scan(); return; }
+        const SDL_Scancode sc = ke.keysym.scancode;
+        // Steal: a key already bound elsewhere (either player) moves here instead
+        // of silently double-firing.
+        for (int pl = 1; pl <= 2; pl++)
+            for (int b = 0; b < psx_keybinds_button_count(); b++)
+                if (psx_keybinds_get_button(pl, b) == sc &&
+                    !(pl == m.cfg_player + 1 && b == scan_index))
+                    psx_keybinds_set_button(pl, b, SDL_SCANCODE_UNKNOWN);
+        psx_keybinds_set_button(m.cfg_player + 1, scan_index, sc);
+        psx_keybinds_save();
+        end_scan();
+        rebuild_pending = true;   // stolen chips refresh too
     };
 
     auto on_show_keyboard = [&m, handle, &end_scan, &end_gp_scan, &rebuild_pending](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {

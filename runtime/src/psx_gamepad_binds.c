@@ -11,6 +11,11 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
 
 #define PSXGP_BIT_SELECT   (1u << 0)
 #define PSXGP_BIT_L3       (1u << 1)
@@ -381,7 +386,13 @@ void psx_gamepad_binds_init(const char *exe_path) {
     set_defaults(&s_binds.p2);
 
     if (!exe_path || !exe_path[0]) {
-        snprintf(s_ini_path, sizeof(s_ini_path), "input.ini");
+        FILE *t = fopen("config/input.ini", "r");
+        if (t) {
+            fclose(t);
+            snprintf(s_ini_path, sizeof(s_ini_path), "config/input.ini");
+        } else {
+            snprintf(s_ini_path, sizeof(s_ini_path), "input.ini");
+        }
     } else {
         char buf[1024];
         strncpy(buf, exe_path, sizeof(buf) - 1);
@@ -391,9 +402,25 @@ void psx_gamepad_binds_init(const char *exe_path) {
         char *last = (slash > bslash) ? slash : bslash;
         if (last) {
             *(last + 1) = '\0';
-            snprintf(s_ini_path, sizeof(s_ini_path), "%sinput.ini", buf);
         } else {
-            snprintf(s_ini_path, sizeof(s_ini_path), "input.ini");
+            buf[0] = '\0';
+        }
+
+        char cand[1024];
+        snprintf(cand, sizeof(cand), "%sconfig/input.ini", buf);
+        FILE *t = fopen(cand, "r");
+        if (t) {
+            fclose(t);
+            snprintf(s_ini_path, sizeof(s_ini_path), "%s", cand);
+        } else {
+            snprintf(cand, sizeof(cand), "%sinput.ini", buf);
+            t = fopen(cand, "r");
+            if (t) {
+                fclose(t);
+                snprintf(s_ini_path, sizeof(s_ini_path), "%s", cand);
+            } else {
+                snprintf(s_ini_path, sizeof(s_ini_path), "%sconfig/input.ini", buf);
+            }
         }
     }
 
@@ -448,8 +475,27 @@ void psx_gamepad_binds_init(const char *exe_path) {
     fclose(f);
 }
 
+static void ensure_parent_dir_gp(const char *path) {
+    if (!path) return;
+    char dir[1024];
+    strncpy(dir, path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+    char *slash = strrchr(dir, '/');
+    char *bslash = strrchr(dir, '\\');
+    char *last = (slash > bslash) ? slash : bslash;
+    if (last) {
+        *last = '\0';
+#ifdef _WIN32
+        _mkdir(dir);
+#else
+        mkdir(dir, 0755);
+#endif
+    }
+}
+
 void psx_gamepad_binds_save(void) {
     if (!s_ini_path[0]) return;
+    ensure_parent_dir_gp(s_ini_path);
     FILE *f = fopen(s_ini_path, "w");
     if (!f) return;
 

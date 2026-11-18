@@ -1208,6 +1208,7 @@ def patch_generated_c(src: str, load_addr: int, size: int) -> str:
        call_by_address(cpu, 0xXXXXXXXXu) so they go through the dispatch ptr.
     4. Export all func_XXXXXXXX symbols so the runtime can enumerate them.
     """
+    src = src.replace('\r\n', '\n').replace('\r', '\n')
     ov_lo = load_addr & 0x1FFFFFFF
     ov_hi = ov_lo + size
 
@@ -1243,10 +1244,13 @@ def patch_generated_c(src: str, load_addr: int, size: int) -> str:
     # 4. Add dllexport to every in-overlay func_XXXXXXXX definition.
     #    psxrecomp-game emits "void func_XXXXXXXX(CPUState* cpu)" on one line
     #    with "{" on the NEXT line — match the signature line alone (no ";" = definition).
+    exported_count = 0
     def add_export(m):
+        nonlocal exported_count
         addr = int(m.group(1), 16)
         if not in_overlay(addr):
             return m.group(0)
+        exported_count += 1
         return (
             '#ifdef _WIN32\n__declspec(dllexport)\n#else\n'
             '__attribute__((visibility("default")))\n#endif\n'
@@ -1254,6 +1258,12 @@ def patch_generated_c(src: str, load_addr: int, size: int) -> str:
         )
     src = re.sub(r'^void func_([0-9A-Fa-f]{8})\(CPUState\* cpu\)$',
                  add_export, src, flags=re.MULTILINE)
+
+    if exported_count == 0:
+        raise RuntimeError(
+            f'patch_generated_c exported 0 func_XXXXXXXX definitions for overlay '
+            f'[0x{ov_lo:08X}, 0x{ov_hi:08X})'
+        )
 
     return src
 
@@ -1279,6 +1289,7 @@ def patch_generated_c_static(src: str, load_addr: int, size: int) -> tuple:
     - No __declspec(dllexport) — all functions have normal external linkage
     - Returns function address list so caller can build the switch dispatch
     """
+    src = src.replace('\r\n', '\n').replace('\r', '\n')
     ov_lo = load_addr & 0x1FFFFFFF
     ov_hi = ov_lo + size
 
@@ -1796,7 +1807,12 @@ def compile_interior_fragment(interior: int, data: bytes, load_addr: int,
         # audit_generated_c rejects any fragment containing unsupported TODOs.
         if b'TODO:' in raw_c:
             return None
-        src = patch_generated_c(raw_c.decode('utf-8', errors='replace'), load_addr, size)
+        decoded_c = raw_c.decode('utf-8', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
+        try:
+            src = patch_generated_c(decoded_c, load_addr, size)
+        except RuntimeError as exc:
+            print(f'  FRAGMENT EXPORT AUDIT FAILED for 0x{interior:08X}: {exc}')
+            return None
         c_audit = audit_generated_c(src, load_addr, size,
                                     binascii.crc32(data) & 0xFFFFFFFF, {})
         if c_audit['unknown_bad'] or c_audit['unsupported_todo_addrs']:
@@ -1893,6 +1909,85 @@ def _bom_free_incdir(d: str) -> str:
     _TCC_BOMFREE_INC[d] = out
     return out
 
+def _count_pe_func_exports(dll_path: str) -> int:
+    """Parse a Windows PE32/PE32+ DLL export directory and count `func_` symbols.
+    Returns -1 if not a PE file (e.g. non-Windows ELF/Mach-O)."""
+    try:
+        with open(dll_path, 'rb') as f:
+            buf = f.read()
+        if len(buf) < 0x40 or buf[:2] != b'MZ':
+            return -1
+        pe_off = struct.unpack_from('<I', buf, 0x3C)[0]
+        if pe_off + 24 > len(buf) or buf[pe_off:pe_off + 4] != b'PE\x00\x00':
+            return -1
+        num_sections = struct.unpack_from('<H', buf, pe_off + 6)[0]
+        opt_size = struct.unpack_from('<H', buf, pe_off + 20)[0]
+        opt_off = pe_off + 24
+        magic = struct.unpack_from('<H', buf, opt_off)[0]
+        # DataDirectory[0] = Export Table (RVA, Size)
+        if magic == 0x20B:      # PE32+
+            exp_rva, exp_sz = struct.unpack_from('<II', buf, opt_off + 112)
+        elif magic == 0x10B:    # PE32
+            exp_rva, exp_sz = struct.unpack_from('<II', buf, opt_off + 96)
+        else:
+            return 0
+        if exp_rva == 0 or exp_sz == 0:
+            return 0
+
+        sec_off = opt_off + opt_size
+        sections = []
+        for i in range(num_sections):
+            s = sec_off + i * 40
+            vsize, vaddr, rsize, rptr = struct.unpack_from('<IIII', buf, s + 8)
+            sections.append((vaddr, max(vsize, rsize), rptr))
+
+        def rva_to_off(rva: int):
+            for vaddr, span, rptr in sections:
+                if vaddr <= rva < vaddr + span:
+                    return rptr + (rva - vaddr)
+            return None
+
+        exp_off = rva_to_off(exp_rva)
+        if exp_off is None or exp_off + 40 > len(buf):
+            return 0
+        num_names = struct.unpack_from('<I', buf, exp_off + 24)[0]
+        names_rva = struct.unpack_from('<I', buf, exp_off + 32)[0]
+        names_off = rva_to_off(names_rva)
+        if names_off is None:
+            return 0
+
+        count = 0
+        for i in range(num_names):
+            name_rva = struct.unpack_from('<I', buf, names_off + i * 4)[0]
+            name_off = rva_to_off(name_rva)
+            if name_off is None:
+                continue
+            end = buf.find(b'\x00', name_off)
+            if end == -1:
+                continue
+            sym = buf[name_off:end].decode('ascii', errors='replace')
+            if sym.startswith('func_'):
+                count += 1
+        return count
+    except Exception:
+        return 0
+
+
+def _verify_compiled_dll_exports(out_dll: str) -> bool:
+    """Fail closed if a compiled Windows PE shard DLL exports 0 `func_` symbols."""
+    if not is_windows():
+        return True
+    n_funcs = _count_pe_func_exports(out_dll)
+    if n_funcs == 0:
+        print(f'  EXPORT AUDIT FAILED: {out_dll} exports 0 func_XXXXXXXX symbols; removing hollow DLL')
+        try:
+            os.remove(out_dll)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def _compile_dll_tcc(c_path: str, out_dll: str, include_dirs, flavor: int,
                      tcc: str) -> bool:
     # strip a UTF-8 BOM off the overlay C itself (tcc 0.9.27 chokes on it)
@@ -1914,7 +2009,7 @@ def _compile_dll_tcc(c_path: str, out_dll: str, include_dirs, flavor: int,
     if r.returncode != 0:
         print(f'  TCC COMPILE ERROR (exit {r.returncode}):\n{r.stderr or r.stdout}')
         return False
-    return True
+    return _verify_compiled_dll_exports(out_dll)
 
 
 def compile_dll(c_path: str, out_dll: str, include_dirs: list[str],
@@ -1967,7 +2062,7 @@ def compile_dll(c_path: str, out_dll: str, include_dirs: list[str],
     if r.returncode != 0:
         print(f'  COMPILE ERROR (exit {r.returncode}):\n{r.stderr or r.stdout}')
         return False
-    return True
+    return _verify_compiled_dll_exports(out_dll)
 
 
 # ---------------------------------------------------------------------------

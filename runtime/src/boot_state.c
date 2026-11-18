@@ -195,11 +195,19 @@ static int apply_section(uint32_t tag, const uint8_t* p, uint32_t len,
         if (len != sizeof(CpuRegs)) return 0;
         const CpuRegs* c = (const CpuRegs*)p;
         memcpy(cpu->gpr,      c->gpr,      sizeof cpu->gpr);
-        cpu->pc = entry_pc;   /* always enter at the game entry, never a mid-PC */
+        cpu->pc = (c->pc != 0u) ? c->pc : entry_pc;
         cpu->hi = c->hi; cpu->lo = c->lo;
         memcpy(cpu->cop0,     c->cop0,     sizeof cpu->cop0);
         memcpy(cpu->gte_data, c->gte_data, sizeof cpu->gte_data);
         memcpy(cpu->gte_ctrl, c->gte_ctrl, sizeof cpu->gte_ctrl);
+        cpu->muldiv_ts_done = 0;
+        cpu->gte_ts_done = 0;
+        memset(cpu->read_absorb, 0, 32);
+        cpu->read_absorb[32] = 0x20;
+        cpu->read_absorb_which = 0;
+        cpu->read_fudge = 0;
+        cpu->ld_which_t = 0x20;
+        cpu->ld_absorb = 0;
         return 1;
     }
     case BS_SEC_RAM:
@@ -207,7 +215,9 @@ static int apply_section(uint32_t tag, const uint8_t* p, uint32_t len,
         memcpy(memory_get_ram_ptr(), p, RAM_SIZE);
         {   /* Kernel-bless: RAM changed wholesale — force re-verification. */
             extern void psx_kernel_bless_note_range(uint32_t phys, uint32_t l);
+            extern void dirty_ram_resync_after_restore(void);
             psx_kernel_bless_note_range(0, RAM_SIZE);
+            dirty_ram_resync_after_restore();
         }
         return 1;
     case BS_SEC_SPAD:
@@ -315,7 +325,7 @@ int boot_state_load(const char* path, uint32_t bios_checksum,
     }
 
     fprintf(stdout, "boot_state: complete snapshot restored, entering game at 0x%08X\n",
-            entry_pc);
+            (unsigned)cpu->pc);
     return 1;
 }
 

@@ -966,11 +966,12 @@ static void telemetry_write_live_json(void) {
     );
 
     if (n > 0) {
-        FILE *f = fopen("psx_live_telemetry.json.tmp", "w");
+        CreateDirectoryA("captures", NULL);
+        FILE *f = fopen("captures/psx_live_telemetry.json.tmp", "w");
         if (f) {
             fputs(buf, f);
             fclose(f);
-            MoveFileExA("psx_live_telemetry.json.tmp", "psx_live_telemetry.json",
+            MoveFileExA("captures/psx_live_telemetry.json.tmp", "captures/psx_live_telemetry.json",
                         MOVEFILE_REPLACE_EXISTING);
         }
     }
@@ -991,8 +992,9 @@ static DWORD WINAPI heartbeat_thread(LPVOID arg) {
 
         /* Every 50 ticks (~5.0 seconds): flush dispatch misses to psx_dispatch_misses.txt */
         if ((ticks % 50) == 0) {
+            CreateDirectoryA("captures", NULL);
             extern void dirty_ram_write_text_misses(const char *path);
-            dirty_ram_write_text_misses("psx_dispatch_misses.txt");
+            dirty_ram_write_text_misses("captures/psx_dispatch_misses.txt");
         }
 
         Sleep(HB_INTERVAL_MS);

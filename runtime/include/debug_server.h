@@ -181,13 +181,16 @@ void debug_server_check_watchpoints(void);
 
 /* ---- Input override ---- */
 
-/* Returns >= 0 if the debug server wants to override pad input,
- * -1 if no override is active. Value is PS1 16-bit button mask. */
+/* Returns >= 0 if the debug server wants to override pad input for `slot`
+ * (0 or 1), -1 if no override is active or slot is invalid. Value is PS1
+ * 16-bit button mask. */
+int debug_server_get_input_override_slot(int slot);
 int debug_server_get_input_override(void);
 
 /* Optional analog-stick override set alongside set_input (lx/ly/rx/ry,
  * 0..255, 0x80 = centre). Returns 1 and fills st[lx,ly,rx,ry] when armed,
- * 0 when the injection is buttons-only. */
+ * 0 when the injection is buttons-only or slot is invalid. */
+int debug_server_get_axis_override_slot(int slot, unsigned char st[4]);
 int debug_server_get_axis_override(unsigned char st[4]);
 
 /* TCP-controlled turbo mode. When enabled the frontend skips presentation and

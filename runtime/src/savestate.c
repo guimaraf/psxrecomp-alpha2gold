@@ -87,6 +87,9 @@ void savestate_poll(CPUState* cpu, uint32_t resume_pc) {
         char path[600];
         if (!slot_path(slot, path, sizeof(path))) return;
         if (boot_state_load(path, s_bios_checksum, s_entry_pc, cpu)) {
+            g_psx_call_bail = 0;
+            g_rfe_escape_pending = 0;
+            psx_icache_reset();
             psx_cycles_resync_after_restore();
             fprintf(stderr, "savestate: LOADED slot %d -> resuming pc=0x%08X\n",
                     slot, (unsigned)cpu->pc);

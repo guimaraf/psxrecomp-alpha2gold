@@ -12,6 +12,11 @@
 #include <string.h>
 #include <ctype.h>
 #include <stddef.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
 
 /* PSX pad word bits (active-low), standard DualShock layout. Matches the
  * PAD_* masks in main.cpp / beetle_main.cpp. */
@@ -191,7 +196,43 @@ static void derive_ini_path(const char *exe_path) {
     } else {
         dir[0] = '\0';
     }
-    snprintf(s_ini_path, sizeof(s_ini_path), "%skeybinds.ini", dir);
+
+    char cand[1024];
+    snprintf(cand, sizeof(cand), "%sconfig/keybinds.ini", dir);
+    FILE *t = fopen(cand, "r");
+    if (t) {
+        fclose(t);
+        snprintf(s_ini_path, sizeof(s_ini_path), "%s", cand);
+        return;
+    }
+    snprintf(cand, sizeof(cand), "%skeybinds.ini", dir);
+    t = fopen(cand, "r");
+    if (t) {
+        fclose(t);
+        snprintf(s_ini_path, sizeof(s_ini_path), "%s", cand);
+        return;
+    }
+
+    /* Default: prioritize config/keybinds.ini */
+    snprintf(s_ini_path, sizeof(s_ini_path), "%sconfig/keybinds.ini", dir);
+}
+
+static void ensure_parent_dir(const char *path) {
+    if (!path) return;
+    char dir[1024];
+    strncpy(dir, path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+    char *slash = strrchr(dir, '/');
+    char *bslash = strrchr(dir, '\\');
+    char *last = (slash > bslash) ? slash : bslash;
+    if (last) {
+        *last = '\0';
+#ifdef _WIN32
+        _mkdir(dir);
+#else
+        mkdir(dir, 0755);
+#endif
+    }
 }
 
 static void write_player_section(FILE *f, const char *section, const PsxPlayerBinds *pb) {
@@ -204,6 +245,7 @@ static void write_player_section(FILE *f, const char *section, const PsxPlayerBi
 }
 
 static void write_ini(const char *path) {
+    ensure_parent_dir(path);
     FILE *f = fopen(path, "w");
     if (!f) return;
     fprintf(f,

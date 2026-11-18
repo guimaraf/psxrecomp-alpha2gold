@@ -538,7 +538,14 @@ static std::filesystem::path resolve_existing_runtime_path(const char* requested
 }
 
 static std::filesystem::path sidecar_cfg_path(const char* argv0, const char* filename) {
-    return exe_dir_from_argv(argv0) / filename;
+    namespace fs = std::filesystem;
+    fs::path exe_dir = exe_dir_from_argv(argv0);
+    fs::path in_config = exe_dir / "config" / filename;
+    std::error_code ec;
+    if (fs::exists(in_config, ec)) return in_config;
+    fs::path in_root = exe_dir / filename;
+    if (fs::exists(in_root, ec)) return in_root;
+    return in_config;
 }
 
 static std::filesystem::path read_cached_path(const char* argv0, const char* filename) {
@@ -554,7 +561,13 @@ static std::filesystem::path read_cached_path(const char* argv0, const char* fil
 
 static void write_cached_path(const char* argv0, const char* filename,
                               const std::filesystem::path& path) {
-    std::ofstream f(sidecar_cfg_path(argv0, filename), std::ios::trunc);
+    namespace fs = std::filesystem;
+    fs::path cfg_p = sidecar_cfg_path(argv0, filename);
+    std::error_code ec;
+    if (cfg_p.has_parent_path()) {
+        fs::create_directories(cfg_p.parent_path(), ec);
+    }
+    std::ofstream f(cfg_p, std::ios::trunc);
     if (f.is_open()) f << path.string() << "\n";
 }
 
@@ -1361,12 +1374,18 @@ static void load_input_config(const char* argv0) {
     set_default_controller_mapping();
 
     namespace fs = std::filesystem;
-    fs::path config_path = exe_dir_from_argv(argv0) / "input.ini";
+    fs::path config_path = exe_dir_from_argv(argv0) / "config" / "input.ini";
     std::error_code ec;
     if (!fs::exists(config_path, ec)) {
-        std::ofstream out(config_path, std::ios::binary);
-        if (out) out << default_input_ini_text();
-        return;
+        fs::path legacy_path = exe_dir_from_argv(argv0) / "input.ini";
+        if (fs::exists(legacy_path, ec)) {
+            config_path = legacy_path;
+        } else {
+            fs::create_directories(config_path.parent_path(), ec);
+            std::ofstream out(config_path, std::ios::binary);
+            if (out) out << default_input_ini_text();
+            return;
+        }
     }
 
     std::ifstream in(config_path);
@@ -1769,24 +1788,27 @@ static void dev_any_controller_sticks(uint8_t st[4]) {
  * stick activity (hybrid rises to analog), and the resolved type goes through
  * the same coherent request channel as real sampling — never slammed mid-
  * handshake (the v0.5.0 phantom-input lesson). */
-static void apply_input_override_to_sio(int override_word) {
-    PlayerInput& p = g_players[0];
+static void apply_input_override_to_sio_slot(int slot, int override_word) {
+    if (slot < 0 || slot > 1) return;
+    PlayerInput& p = g_players[slot];
     const uint16_t w = (uint16_t)override_word;
-    sio_set_pad_state_slot(0, w);
+    sio_set_pad_connected(slot, 1);
+    sio_set_pad_state_slot(slot, w);
 
     uint8_t st[4] = { 0x80, 0x80, 0x80, 0x80 };
     int axes = 0;
 #ifndef PSX_NO_DEBUG_TOOLS
-    axes = debug_server_get_axis_override(st);
+    axes = debug_server_get_axis_override_slot(slot, st);
 #endif
     const bool stick_live = axes != 0 && (st[0] != 0x80 || st[1] != 0x80 ||
                                           st[2] != 0x80 || st[3] != 0x80);
     const bool dpad_live  = ((uint16_t)~w & 0x00F0u) != 0;   /* up/right/down/left */
 
     int mode;
-    if (p.kind != 0)                  mode = p.mode;
-    else if (dev_any_input_enabled()) mode = (int)PSXRecompV4::PAD_MODE_HYBRID;
-    else                              mode = (int)PSXRecompV4::PAD_MODE_DIGITAL;
+    if (p.kind != 0)                                            mode = p.mode;
+    else if (axes != 0 || (slot == 0 && dev_any_input_enabled()))
+                                                                mode = (int)PSXRecompV4::PAD_MODE_HYBRID;
+    else                                                        mode = (int)PSXRecompV4::PAD_MODE_DIGITAL;
 
     int eff_analog;
     if (mode == (int)PSXRecompV4::PAD_MODE_DIGITAL) {
@@ -1799,22 +1821,26 @@ static void apply_input_override_to_sio(int override_word) {
         eff_analog = p.hybrid_analog ? 1 : 0;
     }
     if (!eff_analog) { st[0] = st[1] = st[2] = st[3] = 0x80; }
-    sio_set_pad_sticks(0, st[0], st[1], st[2], st[3]);
-    sio_request_pad_type(0, eff_analog);
+    sio_set_pad_sticks(slot, st[0], st[1], st[2], st[3]);
+    sio_request_pad_type(slot, eff_analog);
 }
 
-static void sample_pad_into_sio(int override) {
-    if (override >= 0) {
-        apply_input_override_to_sio(override);
-        return;
-    }
+static void sample_pad_into_sio(int ov0, int ov1) {
     for (int s = 0; s < 2; s++) {
+        int ov = (s == 0) ? ov0 : ov1;
+        if (ov >= 0) {
+            apply_input_override_to_sio_slot(s, ov);
+            continue;
+        }
         PlayerInput& p = g_players[s];
         const int  player  = s + 1;             /* keybinds.ini section (1|2) */
         /* Dev input: P1 is driven by the keyboard AND every connected controller
          * only when dev input is explicitly requested AND P2 has no assigned device. */
         const bool dev_here = (dev_any_input_enabled() && s == 0 && g_players[1].kind == 0);
-        if (p.kind == 0 && !dev_here) continue;  /* no device in this port */
+        if (p.kind == 0 && !dev_here) {
+            sio_set_pad_state_slot(s, 0xFFFFu);  /* release any prior TCP override */
+            continue;  /* no device in this port */
+        }
 
         /* Resolve the pad type this frame FIRST — the effective analog/digital
          * state gates how the left stick is read for BOTH the button word and the
@@ -1888,24 +1914,25 @@ static void sample_pad_into_sio(int override) {
     }
 }
 
-static void sample_headless_pad_into_sio(int override) {
-    if (override >= 0) {
-        apply_input_override_to_sio(override);
-        return;
-    }
+static void sample_headless_pad_into_sio(int ov0, int ov1) {
+    for (int s = 0; s < 2; s++) {
+        int ov = (s == 0) ? ov0 : ov1;
+        if (ov >= 0) {
+            apply_input_override_to_sio_slot(s, ov);
+            continue;
+        }
 #ifdef PSX_COSIM
-    /* Input-driven cosim (EXPERIMENTAL): the coordinator sets a HELD pad state via the
-     * `setpad` TCP command; the headless sampler applies it every frame so the same
-     * button input is fed to BOTH lockstep instances at the same guest cycle. If the
-     * two instances desync under input, this path is proven nondeterministic and gets
-     * stubbed out (see cosim.c). Default 0xFFFF = all released (PSX pad is active-low). */
-    { extern volatile int g_cosim_pad_hold[2];
-      sio_set_pad_state_slot(0, (uint16_t)g_cosim_pad_hold[0]);
-      sio_set_pad_state_slot(1, (uint16_t)g_cosim_pad_hold[1]);
-      return; }
+        /* Input-driven cosim (EXPERIMENTAL): the coordinator sets a HELD pad state via the
+         * `setpad` TCP command; the headless sampler applies it every frame so the same
+         * button input is fed to BOTH lockstep instances at the same guest cycle. If the
+         * two instances desync under input, this path is proven nondeterministic and gets
+         * stubbed out (see cosim.c). Default 0xFFFF = all released (PSX pad is active-low). */
+        { extern volatile int g_cosim_pad_hold[2];
+          sio_set_pad_state_slot(s, (uint16_t)g_cosim_pad_hold[s]);
+          continue; }
 #endif
-    sio_set_pad_state_slot(0, 0xFFFFu);
-    sio_set_pad_state_slot(1, 0xFFFFu);
+        sio_set_pad_state_slot(s, 0xFFFFu);
+    }
 }
 
 /* PSX native vblank cadence: NTSC ≈ 59.94 Hz. Wall-clock target keeps
@@ -2036,11 +2063,11 @@ static PresRingEntry* present_ring_commit(uint8_t path, uint16_t disp_w,
     return e;
 }
 
-static inline void post_present_low_latency_resample(int override) {
+static inline void post_present_low_latency_resample(int ov0, int ov1) {
     if (g_low_latency_input) {
         SDL_GameControllerUpdate();
         SDL_PumpEvents();
-        sample_pad_into_sio(override);
+        sample_pad_into_sio(ov0, ov1);
         latency_ring_restamp_input();
     }
 }
@@ -2054,14 +2081,16 @@ static void sdl_vblank_present(void) {
     debug_server_record_frame();
     debug_server_check_watchpoints();
 
-    /* Check debug server input override. */
-    int override = debug_server_get_input_override();
+    /* Sample debug server input overrides once per vblank (slots 0 and 1). */
+    int ov0 = debug_server_get_input_override_slot(0);
+    int ov1 = debug_server_get_input_override_slot(1);
 #else
     /* Production: skip debug server. Still need to advance frame counter
      * locally so anything else that reads it continues to work. */
     extern uint64_t s_frame_count;
     s_frame_count++;
-    int override = -1;
+    int ov0 = -1;
+    int ov1 = -1;
 #endif
 
     runtime_perf_diag_tick();
@@ -2164,12 +2193,12 @@ static void sdl_vblank_present(void) {
     }
 
     /* Sample each player's device and feed the matching SIO pad slot.
-     * Debug server input override (when active) drives port 1 only. With
-     * g_low_latency_input this early sample is re-done after the pacer wait
-     * (below) for the interactive present path; it still covers the turbo /
-     * FMV-skip paths that early-return before pacing. */
-    if (g_headless) sample_headless_pad_into_sio(override);
-    else            sample_pad_into_sio(override);
+     * Debug server input overrides (when active) drive slot 0 / slot 1
+     * independently. With g_low_latency_input this early sample is re-done
+     * after the pacer wait (below) for the interactive present path; it still
+     * covers the turbo / FMV-skip paths that early-return before pacing. */
+    if (g_headless) sample_headless_pad_into_sio(ov0, ov1);
+    else            sample_pad_into_sio(ov0, ov1);
 
     /* Latency ring: open this present cycle's slot, stamping when input was
      * sampled into SIO.  Always-on; queried via the debug server "latency". */
@@ -2354,7 +2383,7 @@ static void sdl_vblank_present(void) {
     if (g_low_latency_input) {
         SDL_GameControllerUpdate();  /* refresh pad state after the wait */
         SDL_PumpEvents();            /* refresh keyboard state */
-        sample_pad_into_sio(override);
+        sample_pad_into_sio(ov0, ov1);
         latency_ring_restamp_input();
     }
 
@@ -2464,14 +2493,14 @@ static void sdl_vblank_present(void) {
                  * the wide surface for this buffer doesn't exist yet. */
                 if (gl_renderer_present_wide_fbo((int)di.display_x, (int)di.display_y,
                                                  (int)h, g_video_aa ? 1 : 0)) {
-                    post_present_low_latency_resample(override);
+                    post_present_low_latency_resample(ov0, ov1);
                     return;
                 }
             } else {
                 gl_renderer_present_vram((int)di.display_x, (int)di.display_y,
                                          (int)present_w, (int)h, g_video_aa ? 1 : 0,
                                          (fmv_frame || nw_pin) ? 1 : 0);
-                post_present_low_latency_resample(override);
+                post_present_low_latency_resample(ov0, ov1);
                 return;
             }
         }
@@ -2503,7 +2532,7 @@ static void sdl_vblank_present(void) {
                                          (int)present_w, (int)h, g_video_aa ? 1 : 0,
                                          (fmv_frame || nw_pin) ? 1 : 0);
             }
-            post_present_low_latency_resample(override);
+            post_present_low_latency_resample(ov0, ov1);
             return;
         }
 #endif
@@ -2648,7 +2677,7 @@ static void sdl_vblank_present(void) {
     }
     }
 #endif
-    post_present_low_latency_resample(override);
+    post_present_low_latency_resample(ov0, ov1);
 }
 
 int main(int argc, char** argv) {
@@ -2981,7 +3010,10 @@ int main(int argc, char** argv) {
             if (gc.runtime.overlay_cache) {
                 std::filesystem::path exe_dir = exe_dir_from_argv(argv[0]);
                 std::string cache_dir = (exe_dir / "cache").string();
-                overlay_capture_set_out_dir(exe_dir.string().c_str());
+                std::filesystem::path captures_dir = exe_dir / "captures";
+                std::error_code ec;
+                std::filesystem::create_directories(captures_dir, ec);
+                overlay_capture_set_out_dir(captures_dir.string().c_str());
                 overlay_capture_set_enabled(1);
                 overlay_loader_init(cache_dir.c_str(), game_id.c_str());
                 for (uint32_t addr : gc.runtime.overlay_native_block) {
@@ -3064,8 +3096,15 @@ int main(int argc, char** argv) {
                      * the cache location; no game.toml --out-dir/--captures can make
                      * the write drift from the read. Single source of truth, all
                      * games, dev or prod. */
-                    std::string captures_path =
-                        (exe_dir / "overlay_captures.json").string();
+                    std::filesystem::path cap_p = exe_dir / "captures" / "overlay_captures.json";
+                    std::error_code ec_cap;
+                    if (!std::filesystem::exists(cap_p, ec_cap)) {
+                        std::filesystem::path legacy_cap = exe_dir / "overlay_captures.json";
+                        if (std::filesystem::exists(legacy_cap, ec_cap)) {
+                            cap_p = legacy_cap;
+                        }
+                    }
+                    std::string captures_path = cap_p.string();
                     autocompile_set_cache_paths(cache_dir.c_str(),
                                                 captures_path.c_str());
                     autocompile_configure(ac_cmd->c_str(),
@@ -3100,7 +3139,14 @@ int main(int argc, char** argv) {
     std::string settings_bios_storage;  /* must outlive resolve_bios_for_runtime */
     {
         std::filesystem::path settings_path =
-            exe_dir_from_argv(argv[0]) / "settings.toml";
+            exe_dir_from_argv(argv[0]) / "config" / "settings.toml";
+        std::error_code ec_set;
+        if (!std::filesystem::exists(settings_path, ec_set)) {
+            std::filesystem::path legacy_settings = exe_dir_from_argv(argv[0]) / "settings.toml";
+            if (std::filesystem::exists(legacy_settings, ec_set)) {
+                settings_path = legacy_settings;
+            }
+        }
         const PSXRecompV4::UserSettings us =
             PSXRecompV4::load_user_settings(settings_path);
         if (us.parse_error) {
@@ -3401,9 +3447,12 @@ int main(int argc, char** argv) {
                 p1_mode = seed.p1_mode; p2_mode = seed.p2_mode;
                 if (seed.has_deadzone) resolved_deadzone = seed.deadzone;
                 g_video_win_w = seed.window_width;
-                /* Persist the user's choices next to the exe. */
+                /* Persist the user's choices into config/settings.toml */
+                std::filesystem::path cfg_dir = exe_dir_from_argv(argv[0]) / "config";
+                std::error_code ec_save;
+                std::filesystem::create_directories(cfg_dir, ec_save);
                 PSXRecompV4::save_user_settings(
-                    exe_dir_from_argv(argv[0]) / "settings.toml", seed);
+                    cfg_dir / "settings.toml", seed);
             }
         }
     }
@@ -3443,16 +3492,32 @@ int main(int argc, char** argv) {
     /* Dynamic game core: ensure game_core.dll is loaded */
     if (!game_core_is_loaded()) {
         int loaded = 0;
-        std::filesystem::path core_p = resolve_existing_runtime_path("game_core.dll", argv[0]);
-        if (!core_p.empty()) {
-            loaded = game_core_load(core_p.string().c_str());
+        std::filesystem::path exe_dir = exe_dir_from_argv(argv[0]);
+        std::error_code ec_core;
+        std::filesystem::path core_sub = exe_dir / "core" / "game_core.dll";
+        if (std::filesystem::exists(core_sub, ec_core)) {
+            loaded = game_core_load(core_sub.string().c_str());
         }
         if (!loaded) {
-            std::filesystem::path exe_dir = exe_dir_from_argv(argv[0]);
+            std::filesystem::path core_p = resolve_existing_runtime_path("core/game_core.dll", argv[0]);
+            if (!core_p.empty()) {
+                loaded = game_core_load(core_p.string().c_str());
+            }
+        }
+        if (!loaded) {
+            std::filesystem::path core_p = resolve_existing_runtime_path("game_core.dll", argv[0]);
+            if (!core_p.empty()) {
+                loaded = game_core_load(core_p.string().c_str());
+            }
+        }
+        if (!loaded) {
             std::filesystem::path cand = exe_dir / "game_core.dll";
-            if (std::filesystem::exists(cand)) {
+            if (std::filesystem::exists(cand, ec_core)) {
                 loaded = game_core_load(cand.string().c_str());
             }
+        }
+        if (!loaded) {
+            loaded = game_core_load("core/game_core.dll");
         }
         if (!loaded) {
             loaded = game_core_load("game_core.dll");

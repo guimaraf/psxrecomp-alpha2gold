@@ -617,6 +617,35 @@ uint32_t overlay_watch_pagegen_sum(uint32_t phys, uint32_t len) {
     return sum;
 }
 
+/* Re-synchronize text-guard bitmaps and overlay page-gen counters after a
+ * wholesale RAM restore (savestate / boot_state load). */
+void dirty_ram_resync_after_restore(void) {
+    memset(text_modified_bitmap, 0, sizeof(text_modified_bitmap));
+    memset(text_diverged_bitmap, 0, sizeof(text_diverged_bitmap));
+    g_text_native_blocked = 0;
+    g_text_diverged_pages = 0;
+    g_text_exact_mismatches = 0;
+
+    if (text_ref_image != NULL && text_ref_hi > text_ref_lo) {
+        uint32_t fp = text_ref_lo >> DIRTY_RAM_PAGE_SHIFT;
+        uint32_t lp = (text_ref_hi - 1u) >> DIRTY_RAM_PAGE_SHIFT;
+        for (uint32_t pg = fp; pg <= lp; pg++) {
+            uint32_t lo = pg << DIRTY_RAM_PAGE_SHIFT;
+            uint32_t hi = lo + (1u << DIRTY_RAM_PAGE_SHIFT);
+            if (lo < text_ref_lo) lo = text_ref_lo;
+            if (hi > text_ref_hi) hi = text_ref_hi;
+            if (hi > lo &&
+                memcmp(ram + lo, text_ref_image + (lo - text_ref_lo), hi - lo) != 0) {
+                text_modified_bitmap[pg >> 5] |= (1u << (pg & 31u));
+            }
+        }
+    }
+
+    for (uint32_t pg = 0; pg < DIRTY_RAM_PAGE_COUNT; pg++) {
+        overlay_page_gen[pg]++;
+    }
+}
+
 static inline void overlay_watch_note_write(uint32_t phys, uint32_t size) {
     uint32_t pg = phys >> DIRTY_RAM_PAGE_SHIFT;
     if (pg >= DIRTY_RAM_PAGE_COUNT) return;

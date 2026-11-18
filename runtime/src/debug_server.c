@@ -288,13 +288,16 @@ static uint32_t s_dirty_break_frame = 0;
 static uint64_t s_dirty_break_hits = 0;
 
 /* ---- Input override ---- */
-static int s_input_override = -1;
-static int s_input_frames   = 0;
+static int s_input_override[2] = { -1, -1 };
+static int s_input_frames[2]   = { 0, 0 };
 /* Optional analog-stick override (set_input lx/ly/rx/ry, 0..255, 0x80 =
  * centre). Lets injected input drive analog-mode movement; consumed by the
  * pad sampler alongside the button word. */
-static int     s_axis_override = 0;
-static uint8_t s_axis_st[4]    = { 0x80, 0x80, 0x80, 0x80 };
+static int     s_axis_override[2] = { 0, 0 };
+static uint8_t s_axis_st[2][4]    = {
+    { 0x80, 0x80, 0x80, 0x80 },
+    { 0x80, 0x80, 0x80, 0x80 }
+};
 
 /* ---- Frontend turbo override ---- */
 static volatile int s_turbo_enabled = 0;
@@ -2213,11 +2216,17 @@ static inline void cyc_watch_observe(uint32_t block_leader_phys)
  * block-leader PC — interior loop tops, prologue exits — not just function
  * entries, which is required for a clean, KNOWN-instruction-sequence ruler.
  * Disarmed cost = one volatile load + return (see cyc_watch_observe). */
+/* Last observed compiled block-leader PC (virtual, e.g. 0x80118BF4).
+ * CPS-compiled functions clear cpu->pc on entry, so get_registers falls back
+ * to this value when s_cpu->pc == 0. */
+static uint32_t s_last_observed_block_pc = 0;
+
 void debug_server_cyc_observe(uint32_t block_leader_phys) {
 #ifdef PSX_NO_DEBUG_TOOLS
     (void)block_leader_phys;
     return;
 #else
+    s_last_observed_block_pc = block_leader_phys;
     cyc_watch_observe(block_leader_phys & 0x1FFFFFFFu);
     /* #2 lockstep comparator: per-basic-block compiled-vs-interp check. Self-gates
      * on the armed frame window; ~free (one branch) when disarmed. */
@@ -4920,6 +4929,11 @@ static void handle_get_registers(int id, const char *json)
         pos += snprintf(buf + pos, 4096 - pos, "\"0x%08X\"", s_cpu->gpr[i]);
     }
 
+    uint32_t active_pc = s_cpu->pc;
+    if (active_pc == 0u) active_pc = s_last_observed_block_pc;
+    if (active_pc == 0u) active_pc = g_debug_current_func_addr;
+    if (active_pc == 0u) active_pc = g_debug_last_store_pc;
+
     pos += snprintf(buf + pos, 4096 - pos,
         "],\"hi\":\"0x%08X\",\"lo\":\"0x%08X\","
         "\"cop0_sr\":\"0x%08X\",\"cop0_cause\":\"0x%08X\",\"cop0_epc\":\"0x%08X\","
@@ -4928,7 +4942,7 @@ static void handle_get_registers(int id, const char *json)
         s_cpu->hi, s_cpu->lo,
         s_cpu->cop0[12], s_cpu->cop0[13], s_cpu->cop0[14],
         i_stat, i_mask,
-        s_cpu->pc);
+        active_pc);
 
     send_line(buf);
     free(buf);
@@ -7095,41 +7109,47 @@ static void handle_unwatch(int id, const char *json)
     send_err(id, "watchpoint not found");
 }
 
-static void handle_set_input(int id, const char *json)
+static int apply_input_override_cmd(int id, const char *json, int frames)
 {
-    char val_str[32];
-    if (!json_get_str(json, "buttons", val_str, sizeof(val_str))) {
-        send_err(id, "missing buttons"); return;
+    int slot = json_get_int(json, "slot", 0);
+    if (slot < 0 || slot > 1) {
+        send_err(id, "invalid slot (must be 0 or 1)");
+        return 0;
     }
-    s_input_override = (int)hex_to_u32(val_str);
-    s_input_frames = 0;
+    char val_str[32];
+    if (!json_get_str(json, "buttons", val_str, sizeof(val_str)) || !val_str[0]) {
+        send_err(id, "missing buttons");
+        return 0;
+    }
+    if (val_str[0] == '-') {
+        send_err(id, "invalid buttons");
+        return 0;
+    }
+    s_input_override[slot] = (int)(hex_to_u32(val_str) & 0xFFFFu);
+    s_input_frames[slot]   = frames;
     /* Optional stick override: any of lx/ly/rx/ry (0..255) arms it; omitted
      * axes centre. Absent entirely -> released (buttons-only injection). */
     int ax[4] = { json_get_int(json, "lx", -1), json_get_int(json, "ly", -1),
                   json_get_int(json, "rx", -1), json_get_int(json, "ry", -1) };
-    s_axis_override = (ax[0] >= 0 || ax[1] >= 0 || ax[2] >= 0 || ax[3] >= 0);
+    s_axis_override[slot] = (ax[0] >= 0 || ax[1] >= 0 || ax[2] >= 0 || ax[3] >= 0);
     for (int i = 0; i < 4; i++) {
         int v = ax[i] < 0 ? 0x80 : (ax[i] > 255 ? 255 : ax[i]);
-        s_axis_st[i] = (uint8_t)v;
+        s_axis_st[slot][i] = (uint8_t)v;
     }
-    send_ok(id);
+    return 1;
+}
+
+static void handle_set_input(int id, const char *json)
+{
+    if (apply_input_override_cmd(id, json, 0))
+        send_ok(id);
 }
 
 static void handle_press(int id, const char *json)
 {
-    int buttons = json_get_int(json, "buttons", -1);
-    int frames  = json_get_int(json, "frames", 2);
-    if (buttons < 0) { send_err(id, "missing buttons"); return; }
-    s_input_override = buttons;
-    s_input_frames   = frames;
-    int ax[4] = { json_get_int(json, "lx", -1), json_get_int(json, "ly", -1),
-                  json_get_int(json, "rx", -1), json_get_int(json, "ry", -1) };
-    s_axis_override = (ax[0] >= 0 || ax[1] >= 0 || ax[2] >= 0 || ax[3] >= 0);
-    for (int i = 0; i < 4; i++) {
-        int v = ax[i] < 0 ? 0x80 : (ax[i] > 255 ? 255 : ax[i]);
-        s_axis_st[i] = (uint8_t)v;
-    }
-    send_ok(id);
+    int frames = json_get_int(json, "frames", 2);
+    if (apply_input_override_cmd(id, json, frames))
+        send_ok(id);
 }
 
 /* Reports the current pad word(s) and any active input override. `pad` is
@@ -7151,24 +7171,37 @@ static void handle_pad_status(int id, const char *json)
              "\"slot0\":{\"buttons\":\"0x%04X\",\"connected\":%s,\"analog\":%s,\"sticks\":[%u,%u,%u,%u]},"
              "\"slot1\":{\"buttons\":\"0x%04X\",\"connected\":%s,\"analog\":%s,\"sticks\":[%u,%u,%u,%u]},"
              "\"override\":%d,\"override_frames\":%d,"
-             "\"override_axes\":[%u,%u,%u,%u],\"override_axes_valid\":%s}\n",
+             "\"override_axes\":[%u,%u,%u,%u],\"override_axes_valid\":%s,"
+             "\"override_p2\":%d,\"override_frames_p2\":%d,"
+             "\"override_axes_p2\":[%u,%u,%u,%u],\"override_axes_valid_p2\":%s}\n",
              id, pad0,
              pad0, sio_get_pad_connected(0) ? "true" : "false", sio_get_pad_analog(0) ? "true" : "false",
              sticks0[0], sticks0[1], sticks0[2], sticks0[3],
              pad1, sio_get_pad_connected(1) ? "true" : "false", sio_get_pad_analog(1) ? "true" : "false",
              sticks1[0], sticks1[1], sticks1[2], sticks1[3],
-             s_input_override, s_input_frames,
-             s_axis_st[0], s_axis_st[1], s_axis_st[2], s_axis_st[3],
-             s_axis_override ? "true" : "false");
+             s_input_override[0], s_input_frames[0],
+             s_axis_st[0][0], s_axis_st[0][1], s_axis_st[0][2], s_axis_st[0][3],
+             s_axis_override[0] ? "true" : "false",
+             s_input_override[1], s_input_frames[1],
+             s_axis_st[1][0], s_axis_st[1][1], s_axis_st[1][2], s_axis_st[1][3],
+             s_axis_override[1] ? "true" : "false");
 }
 
 static void handle_clear_input(int id, const char *json)
 {
-    (void)json;
-    s_input_override = -1;
-    s_input_frames   = 0;
-    s_axis_override  = 0;
-    s_axis_st[0] = s_axis_st[1] = s_axis_st[2] = s_axis_st[3] = 0x80;
+    int slot = json_get_int(json, "slot", -1);
+    if (slot < -1 || slot > 1) {
+        send_err(id, "invalid slot (must be -1, 0, or 1)");
+        return;
+    }
+    int lo = (slot < 0) ? 0 : slot;
+    int hi = (slot < 0) ? 1 : slot;
+    for (int s = lo; s <= hi; s++) {
+        s_input_override[s] = -1;
+        s_input_frames[s]   = 0;
+        s_axis_override[s]  = 0;
+        s_axis_st[s][0] = s_axis_st[s][1] = s_axis_st[s][2] = s_axis_st[s][3] = 0x80;
+    }
     send_ok(id);
 }
 
@@ -13303,21 +13336,32 @@ int debug_server_is_connected(void)
     return s_client != SOCK_INVALID;
 }
 
+int debug_server_get_input_override_slot(int slot)
+{
+    if (slot < 0 || slot > 1) return -1;
+    if (s_input_override[slot] >= 0 && s_input_frames[slot] > 0) {
+        if (--s_input_frames[slot] == 0)
+            s_input_override[slot] = -1;
+    }
+    return s_input_override[slot];
+}
+
 int debug_server_get_input_override(void)
 {
-    if (s_input_override >= 0 && s_input_frames > 0) {
-        if (--s_input_frames == 0)
-            s_input_override = -1;
-    }
-    return s_input_override;
+    return debug_server_get_input_override_slot(0);
+}
+
+int debug_server_get_axis_override_slot(int slot, unsigned char st[4])
+{
+    if (slot < 0 || slot > 1 || !s_axis_override[slot]) return 0;
+    st[0] = s_axis_st[slot][0]; st[1] = s_axis_st[slot][1];
+    st[2] = s_axis_st[slot][2]; st[3] = s_axis_st[slot][3];
+    return 1;
 }
 
 int debug_server_get_axis_override(unsigned char st[4])
 {
-    if (!s_axis_override) return 0;
-    st[0] = s_axis_st[0]; st[1] = s_axis_st[1];
-    st[2] = s_axis_st[2]; st[3] = s_axis_st[3];
-    return 1;
+    return debug_server_get_axis_override_slot(0, st);
 }
 
 int debug_server_turbo_enabled(void)

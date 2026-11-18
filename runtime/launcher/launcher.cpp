@@ -690,7 +690,9 @@ void refresh_bios_status(LauncherModel& m) {
 
     // Cache to bios.cfg immediately so runtime loads it without popup prompt
     try {
-        std::ofstream cfg("bios.cfg", std::ios::trunc);
+        fs::path cfg_p = fs::exists("config") ? fs::path("config/bios.cfg") : fs::path("bios.cfg");
+        if (cfg_p.has_parent_path()) fs::create_directories(cfg_p.parent_path());
+        std::ofstream cfg(cfg_p, std::ios::trunc);
         if (cfg.is_open()) {
             cfg << fs::absolute(bp).string() << "\n";
         }
@@ -918,8 +920,12 @@ Result run(SDL_Window* window, void* gl_context,
 
     // Auto-discover BIOS if not already configured in settings.toml
     if (m.bios_path.empty()) {
-        if (fs::exists("bios.cfg")) {
-            std::ifstream cfg("bios.cfg");
+        fs::path cfg_p = fs::path("config/bios.cfg");
+        if (!fs::exists(cfg_p)) cfg_p = assets / "config/bios.cfg";
+        if (!fs::exists(cfg_p)) cfg_p = fs::path("bios.cfg");
+        if (!fs::exists(cfg_p)) cfg_p = assets / "bios.cfg";
+        if (fs::exists(cfg_p)) {
+            std::ifstream cfg(cfg_p);
             std::string line;
             if (std::getline(cfg, line) && !line.empty() && fs::exists(line)) {
                 m.bios_path = fs::path(line).generic_string();
@@ -956,9 +962,13 @@ Result run(SDL_Window* window, void* gl_context,
     if (!fs::exists(check_cache)) check_cache = fs::path("alpha2-gold-game/cache/SLUS-00584");
     if (!fs::exists(check_cache)) check_cache = fs::path("../cache/SLUS-00584");
 
-    fs::path check_core = fs::path("game_core.dll");
+    fs::path check_core = fs::path("core/game_core.dll");
+    if (!fs::exists(check_core)) check_core = assets / "core/game_core.dll";
+    if (!fs::exists(check_core)) check_core = fs::path("game_core.dll");
     if (!fs::exists(check_core)) check_core = assets / "game_core.dll";
+    if (!fs::exists(check_core)) check_core = fs::path("alpha2goldBuild/core/game_core.dll");
     if (!fs::exists(check_core)) check_core = fs::path("alpha2goldBuild/game_core.dll");
+    if (!fs::exists(check_core)) check_core = fs::path("../core/game_core.dll");
     if (!fs::exists(check_core)) check_core = fs::path("../game_core.dll");
     m.has_compilers = fs::exists("compileBuild") || fs::exists(assets / "compileBuild") ||
                       fs::exists("overlay_toolchain") || fs::exists(assets / "overlay_toolchain");
@@ -1698,7 +1708,9 @@ Result run(SDL_Window* window, void* gl_context,
                         if (!fs::exists(target_bios) && fs::exists(bios_path_str)) {
                             fs::copy_file(bios_path_str, target_bios, fs::copy_options::overwrite_existing);
                         }
-                        std::ofstream cfg("bios.cfg", std::ios::trunc);
+                        fs::path cfg_p = fs::exists("config") || fs::exists(assets / "config") ? fs::path("config/bios.cfg") : fs::path("bios.cfg");
+                        if (cfg_p.has_parent_path()) fs::create_directories(cfg_p.parent_path());
+                        std::ofstream cfg(cfg_p, std::ios::trunc);
                         if (cfg.is_open()) {
                             cfg << fs::absolute(fs::path(bios_path_str)).string() << "\n";
                         }
@@ -1787,10 +1799,15 @@ Result run(SDL_Window* window, void* gl_context,
 
                     // Dynamically load game_core.dll
                     std::vector<fs::path> core_cands = {
+                        fs::path("core/game_core.dll"),
+                        assets / "core/game_core.dll",
                         fs::path("game_core.dll"),
                         assets / "game_core.dll",
+                        fs::path("alpha2goldBuild/core/game_core.dll"),
                         fs::path("alpha2goldBuild/game_core.dll"),
+                        fs::path("../core/game_core.dll"),
                         fs::path("../game_core.dll"),
+                        fs::path("alpha2-gold-game/core/game_core.dll"),
                         fs::path("alpha2-gold-game/game_core.dll")
                     };
                     bool loaded_core = false;

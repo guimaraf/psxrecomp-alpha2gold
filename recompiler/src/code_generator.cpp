@@ -646,11 +646,15 @@ std::string CodeGenerator::translate_div(uint32_t instr) {
     uint32_t rs = get_rs(instr);
     uint32_t rt = get_rt(instr);
 
-    // MIPS division: quotient in LO, remainder in HI
-    // Handle division by zero (MIPS behavior: result is unpredictable but doesn't trap)
-    return fmt::format("if ({} != 0) {{ cpu->lo = (uint32_t)((int32_t){} / (int32_t){}); cpu->hi = (uint32_t)((int32_t){} % (int32_t){}); }} else {{ cpu->lo = ((int32_t){} >= 0) ? 0xFFFFFFFF : 1; cpu->hi = (uint32_t){}; }}"
+    // Match the interpreter's R3000A HI/LO results without invoking C's
+    // undefined INT32_MIN / -1 operation. Snapshot operands first because
+    // DIV writes only HI/LO, even when rs and rt alias each other.
+    return fmt::format("{{ int32_t psx_n = (int32_t){}; int32_t psx_d = (int32_t){}; "
+                      "if (psx_d == 0) {{ cpu->lo = (psx_n >= 0) ? 0xFFFFFFFFu : 1u; cpu->hi = (uint32_t)psx_n; }} "
+                      "else if ((uint32_t)psx_n == 0x80000000u && psx_d == -1) {{ cpu->lo = 0x80000000u; cpu->hi = 0u; }} "
+                      "else {{ cpu->lo = (uint32_t)(psx_n / psx_d); cpu->hi = (uint32_t)(psx_n % psx_d); }} }}"
                       "\n#ifdef PSX_ENABLE_BLOCK_CYCLES\n    psx_muldiv_set(cpu, 37u);\n#endif",
-                      reg_name(rt), reg_name(rs), reg_name(rt), reg_name(rs), reg_name(rt), reg_name(rs), reg_name(rs));
+                      reg_name(rs), reg_name(rt));
 }
 
 std::string CodeGenerator::translate_divu(uint32_t instr) {
@@ -1109,7 +1113,7 @@ std::string CodeGenerator::translate_instruction(uint32_t addr, uint32_t instr) 
             case 0x0D:                                          // break
                 {
                     uint32_t break_code = (instr >> 6) & 0xFFFFF;
-                    code = fmt::format("/* break({}) — trap, no-op in recompiler */", break_code);
+                    code = fmt::format("psx_break(cpu, 0x{:05X}u, 0x{:08X}u); return;", break_code, addr);
                 }
                 break;
             case 0x10: code = translate_mfhi(instr); break;    // mfhi

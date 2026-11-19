@@ -3137,6 +3137,10 @@ int main(int argc, char** argv) {
      * fall through to game.toml. The file is the launcher's persistence. */
     bool skip_launcher_setting = false;  /* [launcher] skip_launcher from settings.toml */
     std::string settings_bios_storage;  /* must outlive resolve_bios_for_runtime */
+    std::string launcher_disc_override_storage; /* ditto, when the GUI changes --disc */
+    /* A CLI disc is effective for this launch, not a persisted player choice. */
+    std::filesystem::path saved_disc_path;
+    bool saved_has_disc_path = false;
     {
         std::filesystem::path settings_path =
             exe_dir_from_argv(argv[0]) / "config" / "settings.toml";
@@ -3149,6 +3153,8 @@ int main(int argc, char** argv) {
         }
         const PSXRecompV4::UserSettings us =
             PSXRecompV4::load_user_settings(settings_path);
+        saved_disc_path = us.disc_path;
+        saved_has_disc_path = us.has_disc_path;
         if (us.parse_error) {
             /* The file exists but is not valid TOML: every setting in it (the
              * user's renderer choice, BIOS/disc paths, ...) is being ignored,
@@ -3341,7 +3347,18 @@ int main(int argc, char** argv) {
             seed.spu_hq = g_audio_spu_hq;                 seed.has_spu_hq = true;
             seed.skip_launcher = skip_launcher_setting;   seed.has_skip_launcher = true;
             if (bios_path && bios_path[0]) { seed.bios_path = bios_path; seed.has_bios_path = true; }
-            if (!resolved_disc.empty())    { seed.disc_path = resolved_disc; seed.has_disc_path = true; }
+            /* Explicit --disc must reach first-run's disc verification before
+             * resolve_disc_for_runtime() later applies the runtime override. */
+            if (disc_override_path && disc_override_path[0]) {
+                seed.disc_path = std::filesystem::path(disc_override_path);
+                seed.has_disc_path = true;
+            } else if (!resolved_disc.empty()) {
+                seed.disc_path = resolved_disc;
+                seed.has_disc_path = true;
+            }
+            const bool launcher_had_cli_disc = disc_override_path && disc_override_path[0];
+            const std::filesystem::path launcher_initial_disc = seed.disc_path;
+            const bool launcher_initial_has_disc = seed.has_disc_path;
             seed.memcard_dir = memcard_dir;          seed.has_memcard_dir = true;
             seed.memcard1_enabled = memcard1_enabled; seed.has_memcard1_enabled = true;
             seed.memcard2_enabled = memcard2_enabled; seed.has_memcard2_enabled = true;
@@ -3408,6 +3425,21 @@ int main(int argc, char** argv) {
                 return 0;
             }
             if (lr == psx_launcher::Result::Launch) {
+                /* A disc deliberately selected in the GUI supersedes the
+                 * prefilled CLI disc. Keep its string alive for the later
+                 * runtime resolver and persist the user's new choice. */
+                const bool launcher_changed_disc = launcher_had_cli_disc &&
+                    (seed.has_disc_path != launcher_initial_has_disc ||
+                     (seed.has_disc_path && seed.disc_path != launcher_initial_disc));
+                if (launcher_changed_disc) {
+                    if (seed.has_disc_path) {
+                        launcher_disc_override_storage = seed.disc_path.string();
+                        disc_override_path = launcher_disc_override_storage.c_str();
+                    } else {
+                        disc_override_path = nullptr;
+                        resolved_disc.clear();
+                    }
+                }
 #if defined(_WIN32)
                 {
                     HWND hConsole = GetConsoleWindow();
@@ -3451,8 +3483,13 @@ int main(int argc, char** argv) {
                 std::filesystem::path cfg_dir = exe_dir_from_argv(argv[0]) / "config";
                 std::error_code ec_save;
                 std::filesystem::create_directories(cfg_dir, ec_save);
+                PSXRecompV4::UserSettings settings_to_save = seed;
+                if (disc_override_path && !launcher_changed_disc) {
+                    settings_to_save.disc_path = saved_disc_path;
+                    settings_to_save.has_disc_path = saved_has_disc_path;
+                }
                 PSXRecompV4::save_user_settings(
-                    cfg_dir / "settings.toml", seed);
+                    cfg_dir / "settings.toml", settings_to_save);
             }
         }
     }

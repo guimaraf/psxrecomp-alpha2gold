@@ -1791,6 +1791,7 @@ static void overlay_dispatch_call_probed(CPUState *cpu, uint32_t addr, uint32_t 
 static void init_callbacks(void) {
     extern void psx_restore_state_escape(void);
     extern void psx_rfe_mark_escape(void);
+    extern void psx_break(CPUState *cpu, uint32_t code, uint32_t pc);
     s_callbacks.dispatch_call        = overlay_dispatch_call_probed;
     s_callbacks.check_interrupts     = overlay_ci_wrapper;
     s_callbacks.check_interrupts_at  = overlay_ci_at_wrapper;
@@ -1798,6 +1799,7 @@ static void init_callbacks(void) {
       s_callbacks.advance_cycles     = psx_advance_cycles; }
     s_callbacks.gte_execute          = gte_execute;
     s_callbacks.psx_syscall          = psx_syscall;
+    s_callbacks.psx_break            = psx_break;
     s_callbacks.psx_native_bad_entry = psx_native_bad_entry;
     s_callbacks.psx_unknown_dispatch = psx_unknown_dispatch;
 #ifdef PSX_NO_DEBUG_TOOLS

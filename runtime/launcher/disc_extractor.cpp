@@ -296,7 +296,11 @@ bool DiscExtractor::extract_file_by_lba(uint32_t lba, uint32_t size,
                                         ProgressFn progress) {
     if (!impl_->file.is_open()) return false;
 
-    fs::create_directories(dest_path.parent_path());
+    if (!dest_path.parent_path().empty()) {
+        std::error_code ec;
+        fs::create_directories(dest_path.parent_path(), ec);
+        if (ec) return false;
+    }
     std::ofstream out(dest_path, std::ios::binary);
     if (!out.is_open()) return false;
 
@@ -315,6 +319,7 @@ bool DiscExtractor::extract_file_by_lba(uint32_t lba, uint32_t size,
 
         uint32_t take = (remaining < FORM1_PAYLOAD_SZ) ? remaining : FORM1_PAYLOAD_SZ;
         out.write(reinterpret_cast<const char*>(buf), take);
+        if (!out) return false;
         remaining -= take;
 
         if (progress && (i % 16 == 0 || i == sectors - 1)) {
@@ -323,7 +328,11 @@ bool DiscExtractor::extract_file_by_lba(uint32_t lba, uint32_t size,
         }
     }
 
-    return true;
+    // Buffered writes can fail after write() appears to have succeeded.
+    out.flush();
+    if (!out) return false;
+    out.close();
+    return !out.fail();
 }
 
 bool DiscExtractor::extract_primary_exe(const fs::path& dest_path, ProgressFn progress) {

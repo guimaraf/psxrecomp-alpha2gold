@@ -33,6 +33,7 @@ extern "C" {
 
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -52,6 +53,52 @@ extern "C" {
 namespace fs = std::filesystem;
 
 namespace {
+
+// Reject symlinks/reparse points in the writable setup targets. In particular,
+// never follow an existing local directory to another location.
+bool setup_path_is_link(const fs::path& path) {
+    std::error_code ec;
+    if (fs::is_symlink(fs::symlink_status(path, ec))) return true;
+#if defined(_WIN32)
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return true;
+#endif
+    return false;
+}
+
+// These are structural checks for this project's documented SLUS_005.84,
+// not a cryptographic verification or a substitute for disc verification.
+bool valid_local_psx_exe(const fs::path& path) {
+    std::error_code ec;
+    if (setup_path_is_link(path) || !fs::is_regular_file(path, ec) || ec ||
+        fs::file_size(path, ec) != 610304u || ec) return false;
+    std::ifstream in(path, std::ios::binary);
+    unsigned char header[0x34] = {};
+    if (!in.read(reinterpret_cast<char*>(header), sizeof header)) return false;
+    auto le32 = [&](size_t o) -> uint32_t {
+        return uint32_t(header[o]) | (uint32_t(header[o + 1]) << 8) |
+               (uint32_t(header[o + 2]) << 16) | (uint32_t(header[o + 3]) << 24);
+    };
+    return std::memcmp(header, "PS-X EXE", 8) == 0 &&
+           le32(0x10) == 0x80118908u && le32(0x18) == 0x80118900u &&
+           le32(0x1c) == 0x00094800u;
+}
+
+// Compare a freshly extracted file against an existing local executable without
+// changing either. Failure to read is not treated as equality.
+bool files_equal(const fs::path& a, const fs::path& b) {
+    if (!fs::is_regular_file(a) || !fs::is_regular_file(b) || fs::file_size(a) != fs::file_size(b)) return false;
+    std::ifstream left(a, std::ios::binary), right(b, std::ios::binary);
+    if (!left || !right) return false;
+    char l[8192], r[8192];
+    while (left && right) {
+        left.read(l, sizeof l); right.read(r, sizeof r);
+        const auto n = left.gcount();
+        if (n != right.gcount() || std::memcmp(l, r, static_cast<size_t>(n)) != 0) return false;
+        if (n == 0) return left.eof() && right.eof();
+    }
+    return left.eof() && right.eof();
+}
 
 using psx_launcher::deadzone_pct_to_raw;
 using psx_launcher::deadzone_raw_to_pct;
@@ -217,6 +264,7 @@ struct LauncherModel {
     Rml::String mc1_grid, mc2_grid;
 
     // First-Run setup state (Zero-install standalone pipeline)
+    bool        portable_first_run = false;
     bool        setup_needed      = false;
     bool        setup_running     = false;
     bool        setup_complete    = false;
@@ -950,6 +998,11 @@ Result run(SDL_Window* window, void* gl_context,
     }
     refresh_bios_status(m);
 
+    // A packaged build opts in explicitly: its core is already compiled and
+    // an empty overlay cache is valid (the interpreter remains available).
+    // Keep the historical first-run pipeline for existing installations.
+    const bool portable_first_run = fs::is_regular_file(assets / "portable-first-run.txt");
+    m.portable_first_run = portable_first_run;
     // Check if First-Run standalone recompilation setup is needed:
     // Missing local MIPS binary (local/SLUS_005.84), combat overlay cache, or game_core.dll triggers First-Run.
     fs::path check_exe = fs::path("local/SLUS_005.84");
@@ -972,8 +1025,12 @@ Result run(SDL_Window* window, void* gl_context,
     if (!fs::exists(check_core)) check_core = fs::path("../game_core.dll");
     m.has_compilers = fs::exists("compileBuild") || fs::exists(assets / "compileBuild") ||
                       fs::exists("overlay_toolchain") || fs::exists(assets / "overlay_toolchain");
+    if (portable_first_run) m.has_compilers = false;
 
-    if (!fs::exists(check_core) || !fs::exists(check_cache)) {
+    if (portable_first_run ? (!fs::is_regular_file(assets / "core/game_core.dll") ||
+                              setup_path_is_link(assets / "local") ||
+                              !valid_local_psx_exe(assets / "local/SLUS_005.84"))
+                           : (!fs::exists(check_core) || !fs::exists(check_cache))) {
         m.setup_needed = true;
         m.view = "first_run";
     }
@@ -1077,6 +1134,7 @@ Result run(SDL_Window* window, void* gl_context,
     c.Bind("verdict_state",  &m.verdict_state);
     c.Bind("view",           &m.view);
     c.Bind("setup_needed",      &m.setup_needed);
+    c.Bind("portable_first_run", &m.portable_first_run);
     c.Bind("setup_running",     &m.setup_running);
     c.Bind("setup_complete",    &m.setup_complete);
     c.Bind("setup_pct",         &m.setup_pct);
@@ -1603,6 +1661,7 @@ Result run(SDL_Window* window, void* gl_context,
         [&m](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { m.quit_requested = true; });
     c.BindEventCallback("remove_compilers",
         [&m, handle, assets](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+            if (m.portable_first_run) return;
             std::error_code ec;
             if (fs::exists("compileBuild")) fs::remove_all("compileBuild", ec);
             if (fs::exists(assets / "compileBuild")) fs::remove_all(assets / "compileBuild", ec);
@@ -1633,7 +1692,7 @@ Result run(SDL_Window* window, void* gl_context,
     auto setup_state = std::make_shared<SetupWorkerState>();
 
     c.BindEventCallback("start_setup",
-        [&m, handle, setup_state, assets](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
+        [&m, handle, setup_state, assets, portable_first_run](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) mutable {
             if (m.setup_complete) {
                 m.view = "dashboard";
                 handle.DirtyVariable("view");
@@ -1652,10 +1711,10 @@ Result run(SDL_Window* window, void* gl_context,
             }
 
             m.setup_running = true;
-            m.setup_button_text = "BUILDING RELEASE...";
+            m.setup_button_text = portable_first_run ? "PREPARING DISC..." : "BUILDING RELEASE...";
             m.setup_pct = 5;
             m.setup_pct_str = "5%";
-            m.setup_status = "Starting local release build pipeline...";
+            m.setup_status = portable_first_run ? "Starting disc preparation..." : "Starting local release build pipeline...";
             handle.DirtyVariable("setup_running");
             handle.DirtyVariable("setup_button_text");
             handle.DirtyVariable("setup_pct");
@@ -1692,7 +1751,7 @@ Result run(SDL_Window* window, void* gl_context,
                 setup_state->worker.join();
             }
 
-            setup_state->worker = std::thread([setup_state, disc_path_str, bios_path_str, assets]() {
+            setup_state->worker = std::thread([setup_state, disc_path_str, bios_path_str, assets, portable_first_run]() {
                 auto update_progress = [&](int p, const std::string& msg) {
                     setup_state->pct = p;
                     std::lock_guard<std::mutex> lock(setup_state->mtx);
@@ -1700,6 +1759,71 @@ Result run(SDL_Window* window, void* gl_context,
                 };
 
                 try {
+                    if (portable_first_run) {
+                        const fs::path core = assets / "core/game_core.dll";
+                        if (!fs::is_regular_file(core)) {
+                            update_progress(0, "Missing core/game_core.dll in this package.");
+                            setup_state->failed = true;
+                            setup_state->running = false;
+                            return;
+                        }
+                        update_progress(15, "Preparing the executable from your disc...");
+                        DiscExtractor extractor;
+                        if (!extractor.open(disc_path_str)) {
+                            update_progress(0, "Failed to open disc image.");
+                            setup_state->failed = true;
+                            setup_state->running = false;
+                            return;
+                        }
+                        const fs::path local_dir = assets / "local";
+                        if (setup_path_is_link(local_dir)) {
+                            update_progress(0, "The local directory is a link; use a regular directory.");
+                            setup_state->failed = true;
+                            setup_state->running = false;
+                            return;
+                        }
+                        fs::create_directories(local_dir);
+                        const fs::path final_exe = local_dir / "SLUS_005.84";
+                        const fs::path temporary_exe = local_dir / "SLUS_005.84.setup.tmp";
+                        if (setup_path_is_link(final_exe) || setup_path_is_link(temporary_exe) || fs::exists(temporary_exe)) {
+                            update_progress(0, "A previous setup file exists in local; inspect it before retrying.");
+                            setup_state->failed = true;
+                            setup_state->running = false;
+                            return;
+                        }
+                        if (!extractor.extract_primary_exe(temporary_exe, [&](float frac, const std::string&) {
+                            update_progress(15 + static_cast<int>(frac * 75.0f), "Preparing the executable from your disc...");
+                        })) {
+                            update_progress(0, "Disc extraction failed; inspect local/SLUS_005.84.setup.tmp before retrying.");
+                            setup_state->failed = true;
+                            setup_state->running = false;
+                            return;
+                        }
+                        if (!valid_local_psx_exe(temporary_exe)) {
+                            update_progress(0, "Extracted executable has an invalid size or PS-X EXE header; file kept for inspection.");
+                            setup_state->failed = true;
+                            setup_state->running = false;
+                            return;
+                        }
+                        if (fs::exists(final_exe)) {
+                            if (!files_equal(final_exe, temporary_exe)) {
+                                update_progress(0, "Existing local executable differs from selected disc; both files were kept.");
+                                setup_state->failed = true;
+                                setup_state->running = false;
+                                return;
+                            }
+                            fs::remove(temporary_exe); // created by this setup attempt
+                        } else {
+                            fs::rename(temporary_exe, final_exe);
+                        }
+                        extractor.close();
+                        // A missing native shard is handled by the interpreter.
+                        // Never copy, delete or regenerate a player's cache here.
+                        update_progress(100, "Disc preparation complete. Continue to the dashboard.");
+                        setup_state->complete = true;
+                        setup_state->running = false;
+                        return;
+                    }
                     // Cache and stage BIOS image
                     try {
                         fs::path bios_dir("bios");
@@ -2047,7 +2171,9 @@ Result run(SDL_Window* window, void* gl_context,
             m.setup_needed = false;
             m.setup_pct = 100;
             m.setup_pct_str = "100%";
-            m.setup_status = "Release build complete! Game core and combat overlays are ready.";
+            m.setup_status = portable_first_run
+                ? "Disc preparation complete. Continue to the dashboard."
+                : "Release build complete! Game core and combat overlays are ready.";
             m.setup_button_text = "CONTINUE TO DASHBOARD";
             handle.DirtyVariable("setup_running");
             handle.DirtyVariable("setup_complete");

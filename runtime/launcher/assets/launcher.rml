@@ -359,9 +359,13 @@ button:hover { background-color: #232d3c; }
 	<!-- ================= FIRST-RUN SETUP VIEW ================= -->
 	<div data-if="view == 'first_run'">
 		<div class="firstrun-panel">
-			<div class="eyebrow">STANDALONE LOCAL PIPELINE</div>
+			<div class="eyebrow" data-if="portable_first_run">LOCAL DISC PREPARATION</div>
+			<div class="eyebrow" data-if="portable_first_run == false">STANDALONE LOCAL PIPELINE</div>
 			<div class="firstrun-title">First-Time Setup: Street Fighter Alpha 2 Gold</div>
-			<div class="firstrun-desc">
+			<div class="firstrun-desc" data-if="portable_first_run">
+				Select and verify your own PlayStation disc image and BIOS. The launcher prepares the executable from your disc locally. Overlay cache starts empty and code without a matching shard uses the interpreter.
+			</div>
+			<div class="firstrun-desc" data-if="portable_first_run == false">
 				To comply with clean-room legal requirements, game assets and combat overlays are compiled locally on your machine.
 				Select your PlayStation disc image and BIOS file below. Once both files are verified, start compilation to extract the executable, recompile MIPS code, and generate native combat overlays in ~8 seconds.
 			</div>
@@ -411,9 +415,9 @@ button:hover { background-color: #232d3c; }
 			</div>
 
 			<div style="display: flex; flex-direction: row; justify-content: flex-end; align-items: center; margin-top: 14dp;">
-				<button class="clean-btn" data-if="setup_complete && has_compilers" data-event-click="remove_compilers">REMOVE COMPILERS</button>
+				<button class="clean-btn" data-if="setup_complete && has_compilers && portable_first_run == false" data-event-click="remove_compilers">REMOVE COMPILERS</button>
 				<button class="compile-btn" data-if="setup_running == false" data-event-click="start_setup">{{setup_button_text}}</button>
-				<button class="compile-btn" data-if="setup_running == true" disabled="disabled">BUILDING RELEASE...</button>
+				<button class="compile-btn" data-if="setup_running == true" disabled="disabled">PREPARING...</button>
 			</div>
 		</div>
 	</div>
